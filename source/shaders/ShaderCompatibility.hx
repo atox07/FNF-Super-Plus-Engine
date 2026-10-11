@@ -2,6 +2,9 @@ package shaders;
 
 class ShaderCompatibility
 {
+	/** Warning dell'ultima chiamata a adaptRuntimeShaderCode (il chiamante decide se stamparli). */
+	public static var warnings:Array<String> = [];
+
 	public static function adaptRuntimeShaderCode(source:String, shaderName:String = null, stage:String = "fragment"):String
 	{
 		if (source == null)
@@ -12,8 +15,11 @@ class ShaderCompatibility
 
 		if (dialect != null)
 			code = stripDialectPragmas(code);
+		warnings = [];
 		code = stripUniformInitializers(code);
+		code = fixMainImageEntry(code);
 		code = localizeOpenFLGlobalInitializers(code);
+		warnUnsupportedUniforms(code);
 
 		if (stage == "fragment" && dialect != null)
 		{
@@ -98,20 +104,29 @@ class ShaderCompatibility
 		return lines.join("\n");
 	}
 
+	/**
+	 * Un global con inizializzatore che dipende da openfl_* (varying/uniform di runtime)
+	 * non e' valido in GLSL stretto. Lo trasformiamo in:
+	 *   - dichiarazione globale SENZA inizializzatore (cosi' resta visibile a tutte le funzioni)
+	 *   - assegnazione come prime righe di main()
+	 * Non dichiariamo mai una variabile nuova dentro main: un `vec2 uv = ...;` locale dell'utente
+	 * nello stesso scope darebbe "redefinition" e quindi nero.
+	 */
 	static function localizeOpenFLGlobalInitializers(source:String):String
 	{
 		var lines:Array<String> = source.split("\n");
-		var declarations:Array<String> = [];
-		var globalInit:EReg = ~/^\s*((?:(?:lowp|mediump|highp)\s+)?(?:float|int|bool|vec[234]|mat[234])\s+[A-Za-z_][A-Za-z0-9_]*\s*=\s*[^;]*openfl_[^;]*;)\s*$/;
+		var clean:Array<String> = stripComments(lines);
+		var assignments:Array<String> = [];
+		var globalInit:EReg = ~/^(\s*(?:(?:lowp|mediump|highp)\s+)?(?:float|int|bool|vec[234]|mat[234])\s+([A-Za-z_][A-Za-z0-9_]*))\s*=\s*([^;]*openfl_[^;]*);\s*$/;
 		var depth:Int = 0;
 
 		for (i in 0...lines.length)
 		{
-			var line:String = lines[i];
+			var line:String = clean[i];
 			if (depth == 0 && globalInit.match(line))
 			{
-				declarations.push("\t" + StringTools.trim(globalInit.matched(1)));
-				lines[i] = "";
+				assignments.push("\t" + globalInit.matched(2) + " = " + StringTools.trim(globalInit.matched(3)) + ";");
+				lines[i] = globalInit.matched(1) + ";";
 			}
 
 			depth += countChar(line, "{");
@@ -120,44 +135,123 @@ class ShaderCompatibility
 				depth = 0;
 		}
 
-		if (declarations.length == 0)
-			return lines.join("\n");
+		if (assignments.length == 0)
+			return source;
 
-		var output:Array<String> = [];
-		var waitingMainBrace:Bool = false;
-		var inserted:Bool = false;
-		var mainDecl:EReg = ~/^\s*void\s+(?:main|mainImage)\s*\(/;
-
-		for (line in lines)
+		var mainDecl:EReg = ~/^\s*void\s+main\s*\(/;
+		var mainLine:Int = -1;
+		for (i in 0...lines.length)
 		{
-			output.push(line);
-
-			if (!inserted && mainDecl.match(line))
+			if (mainDecl.match(clean[i]))
 			{
-				if (line.indexOf("{") != -1)
-				{
-					for (declaration in declarations)
-						output.push(declaration);
-					inserted = true;
-				}
-				else
-					waitingMainBrace = true;
-				continue;
-			}
-
-			if (!inserted && waitingMainBrace && line.indexOf("{") != -1)
-			{
-				for (declaration in declarations)
-					output.push(declaration);
-				inserted = true;
-				waitingMainBrace = false;
+				mainLine = i;
+				break;
 			}
 		}
 
-		if (!inserted)
-			output = declarations.concat(output);
+		// Cerca la prima '{' a partire dalla riga di main.
+		var braceLine:Int = -1;
+		var braceIdx:Int = -1;
+		if (mainLine != -1)
+		{
+			for (j in mainLine...lines.length)
+			{
+				braceIdx = clean[j].indexOf("{");
+				if (braceIdx != -1)
+				{
+					braceLine = j;
+					break;
+				}
+			}
+		}
 
-		return output.join("\n");
+		if (braceLine == -1)
+		{
+			warnings.push("Global con openfl_* trovati ma nessun void main() valido: shader lasciata invariata.");
+			return source;
+		}
+
+		var raw:String = lines[braceLine];
+		lines[braceLine] = raw.substr(0, braceIdx + 1) + "\n" + assignments.join("\n") + "\n" + raw.substr(braceIdx + 1);
+		return lines.join("\n");
+	}
+
+	/**
+	 * `void mainImage()` (senza argomenti, stile template Psych) + `#define mainImage main`
+	 * -> `void main()`, rimuovendo la define. La firma Shadertoy completa
+	 * `mainImage(out vec4, in vec2)` NON viene toccata qui (la gestisce il dialetto "shadertoy").
+	 */
+	static function fixMainImageEntry(source:String):String
+	{
+		var noArgMainImage:EReg = ~/\bvoid\s+mainImage\s*\(\s*(?:void)?\s*\)/;
+		if (!noArgMainImage.match(source))
+			return source;
+
+		var hasMain:EReg = ~/\bvoid\s+main\s*\(/;
+		if (hasMain.match(source))
+			return source;
+
+		var defineMain:EReg = ~/^[ \t]*#define[ \t]+mainImage[ \t]+main[ \t]*$/gm;
+		var code:String = defineMain.replace(source, "");
+		return noArgMainImage.replace(code, "void main()");
+	}
+
+	static function warnUnsupportedUniforms(source:String):Void
+	{
+		var clean:String = stripComments(source.split("\n")).join("\n");
+		for (name in ["iChannel1", "iChannel2", "iChannel3", "iMouse", "iDate", "iFrame"])
+			if (new EReg("\\b" + name + "\\b", "").match(clean))
+				warnings.push(name + " non e' supportato da Psych: la shader potrebbe non compilare o dare risultati errati.");
+	}
+
+	/** Sostituisce i commenti con spazi, mantenendo numero di righe e posizioni dei caratteri. */
+	static function stripComments(lines:Array<String>):Array<String>
+	{
+		var result:Array<String> = [];
+		var inBlock:Bool = false;
+		for (line in lines)
+		{
+			var out:StringBuf = new StringBuf();
+			var i:Int = 0;
+			while (i < line.length)
+			{
+				var c:String = line.charAt(i);
+				var n:String = i + 1 < line.length ? line.charAt(i + 1) : "";
+				if (inBlock)
+				{
+					if (c == "*" && n == "/")
+					{
+						inBlock = false;
+						out.add("  ");
+						i += 2;
+					}
+					else
+					{
+						out.add(" ");
+						i++;
+					}
+				}
+				else if (c == "/" && n == "*")
+				{
+					inBlock = true;
+					out.add("  ");
+					i += 2;
+				}
+				else if (c == "/" && n == "/")
+				{
+					for (_ in i...line.length)
+						out.add(" ");
+					i = line.length;
+				}
+				else
+				{
+					out.add(c);
+					i++;
+				}
+			}
+			result.push(out.toString());
+		}
+		return result;
 	}
 
 	static function countChar(source:String, char:String):Int
