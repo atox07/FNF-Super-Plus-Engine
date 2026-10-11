@@ -7,6 +7,7 @@ import states.editors.MasterEditorMenu;
 import options.OptionsState;
 import flixel.text.FlxText;
 import openfl.display.BitmapData;
+import psychlua.backend.MenuScripts;
 #if mobile
 import mobile.backend.MobileScaleMode;
 #end
@@ -42,6 +43,7 @@ class MainMenuState extends MusicBeatState
 	public var leftWatermarkText:FlxText;
 	public var leftItem:FlxSprite;
 	public var rightItem:FlxSprite;
+	public var menuScripts:MenuScripts;
 
 	inline function safeX(x:Float):Float
 	{
@@ -171,6 +173,10 @@ class MainMenuState extends MusicBeatState
 
 		addTouchPad('NONE', 'E_X');
 
+		#if (LUA_ALLOWED || HSCRIPT_ALLOWED)
+		menuScripts = new MenuScripts(this, 'scripts/menus/MainMenuState');
+		menuScripts.call('onCreatePost');
+		#end
 	}
 
 	#if MODS_ALLOWED
@@ -292,6 +298,11 @@ class MainMenuState extends MusicBeatState
 
 	override function update(elapsed:Float)
 	{
+		#if (LUA_ALLOWED || HSCRIPT_ALLOWED)
+		if (menuScripts != null)
+			menuScripts.call('onUpdate', [elapsed]);
+		#end
+
 		if (FlxG.sound.music != null && FlxG.sound.music.volume < 0.8)
 			FlxG.sound.music.volume = Math.min(FlxG.sound.music.volume + 0.5 * elapsed, 0.8);
 
@@ -510,6 +521,37 @@ class MainMenuState extends MusicBeatState
 		super.update(elapsed);
 	}
 
+	override function destroy():Void
+	{
+		#if (LUA_ALLOWED || HSCRIPT_ALLOWED)
+		if (menuScripts != null)
+		{
+			menuScripts.call('onDestroy');
+			menuScripts.destroy();
+			menuScripts = null;
+		}
+		#end
+		super.destroy();
+	}
+
+	// Richiamato dagli script tramite callStateFunction('setDefaultMenuEnabled', [false])
+	public function setDefaultMenuEnabled(enabled:Bool):Void
+	{
+		menuItems.enabled = enabled;
+		for (item in menuItems)
+			item.visible = enabled;
+		if (leftItem != null)
+			leftItem.visible = enabled;
+		if (rightItem != null)
+			rightItem.visible = enabled;
+	}
+
+	// Punto d'aggancio usato da FunkinLua per inoltrare le callback (es. onTweenCompleted) qui
+	public function callOnLuas(name:String, args:Array<Dynamic>):Dynamic
+	{
+		return menuScripts != null ? menuScripts.call(name, args) : null;
+	}
+
 	function isMenuInputBlocked():Bool
 	{
 		if (menuItems == null)
@@ -550,6 +592,9 @@ class MainMenuState extends MusicBeatState
 
 class PlusMainMenuItemGroup extends FlxTypedGroup<FlxSprite>
 {
+	public var enabled:Bool = true;
+	public var busy:Bool = false;
+
 	public function new()
 	{
 		super();
@@ -560,4 +605,3 @@ class PlusMainMenuItemGroup extends FlxTypedGroup<FlxSprite>
 		return add(item);
 	}
 }
-
