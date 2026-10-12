@@ -57,7 +57,7 @@ class EventCreatorState extends MusicBeatState implements PsychUIEventHandler.Ps
 	// Utility
 	var fileDialog:FileDialogHandler;
 
-	static inline var CATEGORIES:Array<String> = ['Visual', 'Audio', 'Camera', 'Gameplay', 'Other'];
+	static var CATEGORIES:Array<String> = ['Visual', 'Audio', 'Camera', 'Gameplay', 'Other'];
 
 	// ================================================================
 	// CREATE / DESTROY
@@ -293,7 +293,7 @@ class EventCreatorState extends MusicBeatState implements PsychUIEventHandler.Ps
 		out = ~/^_+|_+$/g.replace(out, '');
 		if (out.length < 1)
 			out = 'event';
-		if (~/^[0-9]/.test(out))
+		if (~/^[0-9]/.match(out))
 			out = 'e_' + out;
 		return out;
 	}
