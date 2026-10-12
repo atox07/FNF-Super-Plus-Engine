@@ -11,7 +11,8 @@ import sys.io.File;
 import backend.Mods;
 import backend.Paths;
 import backend.ui.*;
-import states.editors.FileDialogHandler;
+import backend.ui.PsychUIEventHandler;
+import states.editors.content.FileDialogHandler;
 
 /**
  * Event Creator — editor visuale per eventi custom di Super Plus Engine.
