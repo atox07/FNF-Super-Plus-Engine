@@ -17,14 +17,39 @@ import states.editors.content.FileDialogHandler;
 /**
  * Event Creator — editor visuale per eventi custom di Super Plus Engine.
  *
- * Genera due file per evento:
- *   mods/<mod>/custom_events/<slug>.lua  -> codice (eseguito da PlayState)
- *   mods/<mod>/custom_events/<slug>.txt  -> descrizione (mostrata dal Chart Editor)
+ * Genera due file per evento (il nome file = ID evento = nome mostrato nel Chart Editor):
+ *   mods/<mod>/custom_events/<ID>.lua  -> codice (eseguito da PlayState)
+ *   mods/<mod>/custom_events/<ID>.txt  -> descrizione (mostrata dal Chart Editor)
+ * Senza mod attiva i file vanno in mods/custom_events/ (cartella globale).
  *
  * Accesso previsto: Chart Editor -> File -> Custom Events...
  */
 class EventCreatorState extends MusicBeatState implements PsychUIEventHandler.PsychUIEvent
 {
+	// ----------------------------------------------------------------
+	// Costanti
+	// ----------------------------------------------------------------
+
+	/** EventNote ha solo value1 e value2 (hardcoded nel chart format). */
+	static inline var MAX_CHART_VALUES:Int = 2;
+
+	/** Righe di codice mostrate nel tab Code (il FlxText non scrolla né viene clippato). */
+	static inline var CODE_PREVIEW_LINES:Int = 26;
+
+	/**
+	 * Eventi gestiti direttamente da PlayState.triggerEvent / eventEarlyTrigger.
+	 * Un evento custom con lo stesso ID verrebbe eseguito in aggiunta a quello nativo.
+	 * Minuscolo: il confronto è case-insensitive.
+	 */
+	static var BUILTIN_EVENTS:Array<String> = [
+		'hey!', 'set gf speed', 'add camera zoom', 'set camera bopping', 'play animation',
+		'camera follow pos', 'alt idle animation', 'screen shake', 'change stage',
+		'change character', 'change scroll speed', 'set property', 'play sound',
+		'lyric event', 'kill henchmen'
+	];
+
+	static var CATEGORIES:Array<String> = ['Visual', 'Audio', 'Camera', 'Gameplay', 'Other'];
+
 	// ----------------------------------------------------------------
 	// Dati del progetto (struttura "flat" come nel prototipo HTML)
 	// ----------------------------------------------------------------
@@ -46,6 +71,9 @@ class EventCreatorState extends MusicBeatState implements PsychUIEventHandler.Ps
 	var statusText:FlxText;
 	var unsavedProgress:Bool = false;
 
+	/** Ultimo .lua scritto in questa sessione: salvarci di nuovo sopra non chiede conferma. */
+	var lastSavedPath:String = null;
+
 	// Widget del tab Metadata
 	var nameInput:PsychUIInputText;
 	var descInput:PsychUIInputText;
@@ -56,8 +84,6 @@ class EventCreatorState extends MusicBeatState implements PsychUIEventHandler.Ps
 
 	// Utility
 	var fileDialog:FileDialogHandler;
-
-	static var CATEGORIES:Array<String> = ['Visual', 'Audio', 'Camera', 'Gameplay', 'Other'];
 
 	// ================================================================
 	// CREATE / DESTROY
@@ -133,7 +159,7 @@ class EventCreatorState extends MusicBeatState implements PsychUIEventHandler.Ps
 
 		// Hint
 		var hint = new FlxText(objX, objY, 460,
-			'Define the event identity. The name appears in the Chart Editor dropdown; the category groups events in the palette.',
+			'Define the event identity. The name is the event ID: it appears in the Chart Editor dropdown and is the name of the saved files.',
 			12);
 		hint.setFormat(Paths.font('vcr.ttf'), 12, 0xFFB0B0B0, LEFT);
 		hint.wordWrap = true;
@@ -181,14 +207,15 @@ class EventCreatorState extends MusicBeatState implements PsychUIEventHandler.Ps
 		tab.add(descInput);
 		objY += 60;
 
-		// Chart values
-		tab.add(makeLabel('Values exposed in chart (1-8):', objX, objY));
-		chartValuesStepper = new PsychUINumericStepper(objX, objY + 18, 1, projChartValues, 1, 8, 0, 80);
+		// Chart values (il chart format ne supporta al massimo 2: value1 e value2)
+		tab.add(makeLabel('Values exposed in chart (0-' + MAX_CHART_VALUES + '):', objX, objY));
+		chartValuesStepper = new PsychUINumericStepper(objX, objY + 18, 1, projChartValues, 0, MAX_CHART_VALUES, 0, 80);
 		chartValuesStepper.onValueChange = function()
 		{
 			projChartValues = Std.int(chartValuesStepper.value);
 			unsavedProgress = true;
 			refreshSummary();
+			refreshCodePreview();
 			setStatus('Modified.');
 		};
 		tab.add(chartValuesStepper);
@@ -236,7 +263,7 @@ class EventCreatorState extends MusicBeatState implements PsychUIEventHandler.Ps
 	{
 		var tab = mainBox.getTab('Parameters').menu;
 		var hint = new FlxText(15, 20, 460,
-			'Parameters tab — coming in the next step.\n\nHere you will define what the event asks the charter for (name, type, default, min/max). The first N parameters (where N = chart values) are exposed as value1, value2, ... in the chart; the rest are fixed constants.',
+			'Parameters tab — coming in the next step.\n\nHere you will define what the event asks the charter for (name, type, default, min/max). The first N parameters (where N = chart values) are exposed as value1, value2 in the chart; the rest are fixed constants.',
 			13);
 		hint.setFormat(Paths.font('vcr.ttf'), 13, 0xFF909090, LEFT);
 		hint.wordWrap = true;
@@ -266,38 +293,69 @@ class EventCreatorState extends MusicBeatState implements PsychUIEventHandler.Ps
 	{
 		var tab = mainBox.getTab('Code').menu;
 		codePreview = new FlxText(10, 20, 480, '', 10);
-		codePreview.setFormat('Consolas', 10, 0xFFE0E0E0, LEFT);
+		// vcr è monospace e c'è su ogni piattaforma ('Consolas' esiste solo su Windows)
+		codePreview.setFormat(Paths.font('vcr.ttf'), 10, 0xFFE0E0E0, LEFT);
 		codePreview.wordWrap = false;
 		tab.add(codePreview);
 	}
 
 	function refreshCodePreview():Void
 	{
-		if (codePreview != null)
-			codePreview.text = generateLuaCode();
+		if (codePreview == null)
+			return;
+
+		var lines = generateLuaCode().split('\n');
+		if (lines.length > CODE_PREVIEW_LINES)
+		{
+			var extra = lines.length - CODE_PREVIEW_LINES;
+			lines = lines.slice(0, CODE_PREVIEW_LINES);
+			lines.push('-- ... (' + extra + ' more lines, see the saved file)');
+		}
+		codePreview.text = lines.join('\n');
+	}
+
+	// ================================================================
+	// ID EVENTO / PATH
+	// ================================================================
+
+	/**
+	 * L'ID evento è il nome del file: il Chart Editor lo legge da custom_events/*.txt
+	 * e PlayState carica custom_events/<ID>.lua. Si tolgono solo i caratteri non validi
+	 * nei nomi file, mantenendo maiuscole e spazi ("Glitch Effect" resta tale, come
+	 * gli eventi nativi tipo "Camera Follow Pos").
+	 */
+	function toEventId(s:String):String
+	{
+		if (s == null)
+			return 'New Event';
+		var out = StringTools.trim(s);
+		out = ~/[\\\/:*?"<>|]+/g.replace(out, '_');
+		out = ~/[. ]+$/.replace(out, '');
+		if (out.length < 1)
+			out = 'New Event';
+		return out;
+	}
+
+	/** Cartella di destinazione: mod attiva, altrimenti cartella globale mods/custom_events/. */
+	function getEventsFolder():String
+	{
+		var modDir = Mods.currentModDirectory;
+		if (modDir != null && modDir.length > 0)
+			return 'mods/' + modDir + '/custom_events/';
+		return 'mods/custom_events/';
+	}
+
+	function oneLine(s:String):String
+	{
+		if (s == null)
+			return '';
+		s = StringTools.replace(s, '\r', ' ');
+		return StringTools.replace(s, '\n', ' ');
 	}
 
 	// ================================================================
 	// GENERAZIONE CODICE (versione Metadata-only)
 	// ================================================================
-	function slugify(s:String):String
-	{
-		var out = s.toLowerCase();
-		out = StringTools.replace(out, 'à', 'a');
-		out = StringTools.replace(out, 'è', 'e');
-		out = StringTools.replace(out, 'é', 'e');
-		out = StringTools.replace(out, 'ì', 'i');
-		out = StringTools.replace(out, 'ò', 'o');
-		out = StringTools.replace(out, 'ù', 'u');
-		out = ~/[^a-z0-9]+/g.replace(out, '_');
-		out = ~/^_+|_+$/g.replace(out, '');
-		if (out.length < 1)
-			out = 'event';
-		if (~/^[0-9]/.match(out))
-			out = 'e_' + out;
-		return out;
-	}
-
 	function escapeLuaString(s:String):String
 	{
 		if (s == null)
@@ -313,10 +371,10 @@ class EventCreatorState extends MusicBeatState implements PsychUIEventHandler.Ps
 	function generateLuaCode():String
 	{
 		var L:Array<String> = [];
-		var slug = slugify(projName);
+		var id = toEventId(projName);
 
 		L.push('-- ============================================================');
-		L.push('--  ' + projName);
+		L.push('--  ' + oneLine(projName));
 		L.push('--  Generated by Event Creator (Super Plus Engine)');
 		L.push('--  You can edit this file by hand: it is normal Lua code.');
 		L.push('-- ============================================================');
@@ -332,6 +390,10 @@ class EventCreatorState extends MusicBeatState implements PsychUIEventHandler.Ps
 		L.push('}');
 		L.push('');
 		L.push('function onEvent(eventName, value1, value2, strumTime)');
+		// PlayState chiama onEvent su TUTTI gli script Lua per OGNI evento del chart:
+		// senza questo guard l'evento scatterebbe anche per gli altri.
+		L.push('    if eventName ~= ' + escapeLuaString(id) + ' then return end');
+		L.push('');
 		if (projBlocks.length < 1)
 			L.push('    -- no actions yet');
 		L.push('end');
@@ -342,7 +404,7 @@ class EventCreatorState extends MusicBeatState implements PsychUIEventHandler.Ps
 	function generateDescriptionTxt():String
 	{
 		var desc = (projDescription != null && projDescription.length > 0) ? projDescription : projName;
-		return '[' + projCategory + '] ' + desc;
+		return '[' + projCategory + '] ' + oneLine(desc);
 	}
 
 	// ================================================================
@@ -358,9 +420,10 @@ class EventCreatorState extends MusicBeatState implements PsychUIEventHandler.Ps
 
 		if (fileNameText != null)
 		{
-			var slug = slugify(projName);
-			fileNameText.text = 'File: mods/<active_mod>/custom_events/' + slug + '.lua\n'
-				+ '      mods/<active_mod>/custom_events/' + slug + '.txt';
+			var id = toEventId(projName);
+			var folder = getEventsFolder();
+			fileNameText.text = 'File: ' + folder + id + '.lua\n'
+				+ '      ' + folder + id + '.txt';
 		}
 	}
 
@@ -369,37 +432,57 @@ class EventCreatorState extends MusicBeatState implements PsychUIEventHandler.Ps
 	// ================================================================
 	function doSave():Void
 	{
-		var modDir = Mods.currentModDirectory;
-		if (modDir == null || modDir.length < 1)
-		{
-			setStatus('ERROR: No active mod. Enable a mod first.', true);
-			FlxG.sound.play(Paths.sound('cancelMenu'), 0.6);
-			return;
-		}
-
-		if (projName == null || projName.length < 1)
+		if (projName == null || StringTools.trim(projName).length < 1)
 		{
 			setStatus('ERROR: Event name is empty.', true);
 			FlxG.sound.play(Paths.sound('cancelMenu'), 0.6);
 			return;
 		}
 
-		var slug = slugify(projName);
-		var folder = 'mods/' + modDir + '/custom_events/';
+		var id = toEventId(projName);
 
+		// ID uguale a un evento nativo: verrebbe eseguito due volte
+		if (BUILTIN_EVENTS.contains(id.toLowerCase()))
+		{
+			setStatus('ERROR: "' + id + '" is a built-in event name. Choose another name.', true);
+			FlxG.sound.play(Paths.sound('cancelMenu'), 0.6);
+			return;
+		}
+
+		var folder = getEventsFolder();
+		var luaPath = folder + id + '.lua';
+
+		// Mai sovrascrivere in silenzio un file esistente (potrebbe essere stato modificato a mano)
+		if (FileSystem.exists(luaPath) && luaPath != lastSavedPath)
+		{
+			openSubState(new states.editors.content.Prompt(
+				'"' + id + '" already exists in custom_events.\nOverwrite it?',
+				function() writeEvent(folder, id)
+			));
+			return;
+		}
+
+		writeEvent(folder, id);
+	}
+
+	function writeEvent(folder:String, id:String):Void
+	{
 		try
 		{
 			if (!FileSystem.exists(folder))
 				FileSystem.createDirectory(folder);
 
-			var luaPath = folder + slug + '.lua';
-			var txtPath = folder + slug + '.txt';
+			var luaPath = folder + id + '.lua';
+			var txtPath = folder + id + '.txt';
 
 			File.saveContent(luaPath, generateLuaCode());
 			File.saveContent(txtPath, generateDescriptionTxt());
 
+			lastSavedPath = luaPath;
 			unsavedProgress = false;
-			setStatus('Saved to ' + luaPath + ' + .txt', false, 0xFF70D070);
+
+			var where = (Mods.currentModDirectory == null || Mods.currentModDirectory.length < 1) ? ' (global, no active mod)' : '';
+			setStatus('Saved ' + luaPath + ' + .txt' + where, false, 0xFF70D070);
 			FlxG.sound.play(Paths.sound('confirmMenu'), 0.6);
 			trace('[EventCreatorState] Saved: ' + luaPath + ' and ' + txtPath);
 		}
