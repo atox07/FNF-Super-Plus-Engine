@@ -132,6 +132,7 @@ You need to have:
 -  **MIDI to Chart System (Import MIDI):** Added a new "Import MIDI..." option in the Chart Editor that generates chart notes from .mid / .midi files.
 - **Shader Compatibility Layer:** Automatic adaptation of legacy (0.6.3) (COMING SOON IN 1.2)
 - **Event Creator:** Full in-game visual editor for custom Lua events. (COMING SOON IN 1.2)
+- ### Menu Scripting MainMenuState can now load Lua/HScript from `scripts/menus/MainMenuState/init.lua` (or `.hx`) (COMING SOON IN 1.2)
 
 # Features inherited from Plus Engine (after 1.0.4)
 
