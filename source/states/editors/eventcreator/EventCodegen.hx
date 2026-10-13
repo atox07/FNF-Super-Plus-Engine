@@ -340,6 +340,178 @@ class EventCodegen
 		return '--[' + eq + '[EC\n' + json + '\nEC]' + eq + ']';
 	}
 
+	// ----------------------------------------------------------------
+	// Lettura dell'header (inverso di encodeHeader)
+	// ----------------------------------------------------------------
+
+	/** Motivo per cui l'ultimo decodeHeader ha restituito null. */
+	public static var headerError:String = null;
+
+	/** Posizione del blocco --[==[EC ... EC]==] nel codice, o null se non c'e'. */
+	static function findHeader(code:String):{start:Int, jsonFrom:Int, jsonEnd:Int, end:Int}
+	{
+		var re:EReg = ~/--\[(=*)\[EC\r?\n/;
+		if (!re.match(code))
+			return null;
+
+		var mp = re.matchedPos();
+		var eq:String = re.matched(1);
+		var jsonFrom:Int = mp.pos + mp.len;
+		var tok:String = 'EC]' + eq + ']';
+		var tokPos:Int = code.indexOf(tok, jsonFrom);
+		if (tokPos < 0)
+			return null;
+
+		return {start: mp.pos, jsonFrom: jsonFrom, jsonEnd: tokPos, end: tokPos + tok.length};
+	}
+
+	static function jStr(o:Dynamic, key:String, def:String):String
+	{
+		var v:Dynamic = Reflect.field(o, key);
+		return (v == null) ? def : Std.string(v);
+	}
+
+	static function jNum(o:Dynamic, key:String, def:Float):Float
+	{
+		var v:Dynamic = Reflect.field(o, key);
+		if (v == null)
+			return def;
+		var f:Float = Std.parseFloat(Std.string(v));
+		return Math.isNaN(f) ? def : f;
+	}
+
+	static function jBool(o:Dynamic, key:String, def:Bool):Bool
+	{
+		var v:Dynamic = Reflect.field(o, key);
+		return (v == null) ? def : (Std.string(v) == 'true');
+	}
+
+	/**
+	 * Ricostruisce il progetto dall'header di un .lua generato da Event Creator.
+	 * Restituisce null se l'header manca, e' corrotto o ha un formato sconosciuto
+	 * (il motivo e' in headerError). Non lancia eccezioni.
+	 */
+	public static function decodeHeader(code:String):EventProject
+	{
+		headerError = null;
+
+		var h = findHeader(code);
+		if (h == null)
+		{
+			headerError = 'no round-trip header found';
+			return null;
+		}
+
+		var data:Dynamic = null;
+		try
+		{
+			data = Json.parse(code.substring(h.jsonFrom, h.jsonEnd));
+		}
+		catch (e:Dynamic)
+		{
+			headerError = 'header JSON is invalid (' + Std.string(e) + ')';
+			return null;
+		}
+
+		if (data == null || !Reflect.isObject(data))
+		{
+			headerError = 'header JSON is not an object';
+			return null;
+		}
+
+		var fmt:Null<Int> = Std.parseInt(Std.string(Reflect.field(data, 'format')));
+		if (fmt != 1)
+		{
+			headerError = 'unsupported header format: ' + Std.string(Reflect.field(data, 'format'));
+			return null;
+		}
+
+		var p:EventProject = new EventProject();
+		p.name = jStr(data, 'name', p.name);
+		p.description = jStr(data, 'description', '');
+
+		var cat:String = jStr(data, 'category', p.category);
+		if (EventPalette.CATEGORIES.indexOf(cat) >= 0)
+			p.category = cat;
+
+		p.chartValues = Std.int(Math.max(0, Math.min(MAX_CHART_VALUES, jNum(data, 'chartValues', 2))));
+
+		var plist:Dynamic = Reflect.field(data, 'parameters');
+		if (plist != null && Std.isOfType(plist, Array))
+		{
+			for (o in (plist : Array<Dynamic>))
+			{
+				if (o == null)
+					continue;
+				var type:String = jStr(o, 'type', 'text');
+				if (ParamTypes.ALL.indexOf(type) < 0)
+					type = 'text';
+
+				var q:ParamDef = new ParamDef(jStr(o, 'name', 'param' + (p.params.length + 1)), type);
+				q.defaultValue = jStr(o, 'def', '');
+				q.useRange = jBool(o, 'useRange', false);
+				q.min = jNum(o, 'min', 0);
+				q.max = jNum(o, 'max', 1);
+				q.step = jNum(o, 'step', 0.05);
+				q.fixed = jBool(o, 'fixed', false);
+
+				var opts:Dynamic = Reflect.field(o, 'options');
+				if (opts != null && Std.isOfType(opts, Array))
+				{
+					for (x in (opts : Array<Dynamic>))
+						if (x != null)
+							q.options.push(Std.string(x));
+				}
+				p.params.push(q);
+			}
+		}
+
+		var blist:Dynamic = Reflect.field(data, 'blocks');
+		if (blist != null && Std.isOfType(blist, Array))
+		{
+			for (o in (blist : Array<Dynamic>))
+			{
+				if (o == null)
+					continue;
+				var id:String = jStr(o, 'id', '');
+				if (id == '')
+					continue;
+
+				var inst:BlockInstance = new BlockInstance(id);
+				var f:Dynamic = Reflect.field(o, 'fields');
+				if (f != null && Reflect.isObject(f))
+				{
+					for (k in Reflect.fields(f))
+					{
+						var v:Dynamic = Reflect.field(f, k);
+						if (v != null)
+							inst.set(k, Std.string(v));
+					}
+				}
+				p.blocks.push(inst);
+			}
+		}
+
+		return p;
+	}
+
+	/** Il codice senza il blocco header (per anteprima e per confrontare due versioni). */
+	public static function stripHeader(code:String):String
+	{
+		var h = findHeader(code);
+		if (h == null)
+			return code;
+		return code.substr(0, h.start) + '-- (round-trip header hidden)' + code.substr(h.end);
+	}
+
+	/** true se due .lua hanno lo stesso codice, ignorando header, fine riga e spazi ai bordi. */
+	public static function sameBody(a:String, b:String):Bool
+	{
+		var na:String = stripHeader(a).replace('\r\n', '\n').trim();
+		var nb:String = stripHeader(b).replace('\r\n', '\n').trim();
+		return na == nb;
+	}
+
 	// ================================================================
 	// BLOCCHI
 	// ================================================================
@@ -429,39 +601,6 @@ class EventCodegen
 			ctx.warnings.push("\"$" + key + "\" in the template of \"" + def.name + "\" matches no field or parameter.");
 			return 'nil';
 		});
-	}
-
-	/**
-	 * Anteprima Lua di un singolo blocco (per il tab Actions).
-	 * I tag auto-generati compaiono come "ec_preview_N".
-	 */
-	public static function previewBlock(p:EventProject, index:Int):String
-	{
-		if (p == null || index < 0 || index >= p.blocks.length)
-			return '';
-
-		var inst:BlockInstance = p.blocks[index];
-		var def:BlockDef = EventPalette.get(inst.id);
-		if (def == null)
-			return '-- unknown block: ' + inst.id;
-
-		var ctx:GenCtx = new GenCtx(eventId(p.name), 'preview');
-		for (q in p.params)
-		{
-			var pid:String = ident(q.name);
-			ctx.paramIdents.set(pid, pid);
-		}
-
-		if (def.special == 'wait')
-		{
-			var f:BlockFieldDef = findField(def, 'seconds');
-			var secs:String = (f != null) ? fieldLiteral(def, f, inst, ctx) : '0.5';
-			var tag:String = ctx.newTag();
-			return 'runTimer(' + esc(tag) + ', ' + secs + ')\n'
-				+ 'ec_pending[' + esc(tag) + '] = function() ... end';
-		}
-
-		return expand(def, inst, ctx);
 	}
 
 	static function repeatIndent(depth:Int):String
