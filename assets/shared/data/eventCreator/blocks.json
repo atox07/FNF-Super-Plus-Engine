@@ -1,0 +1,302 @@
+{
+  "version": 1,
+  "blocks": [
+
+    { "id": "tween_alpha", "name": "Tween Alpha", "category": "Visual",
+      "desc": "Fade an object in or out.",
+      "fields": [
+        { "key": "target",   "label": "Target",       "type": "object", "def": "boyfriend" },
+        { "key": "value",    "label": "Alpha (0-1)",  "type": "float",  "def": "0" },
+        { "key": "duration", "label": "Duration (s)", "type": "float",  "def": "0.5" },
+        { "key": "ease",     "label": "Ease",         "type": "ease",   "def": "linear" },
+        { "key": "tag",      "label": "Tag",          "type": "tag" }
+      ],
+      "template": "doTweenAlpha($tag, $target, $value, $duration, $ease)" },
+
+    { "id": "tween_angle", "name": "Tween Angle", "category": "Visual",
+      "desc": "Rotate an object.",
+      "fields": [
+        { "key": "target",   "label": "Target",       "type": "object", "def": "boyfriend" },
+        { "key": "value",    "label": "Angle",        "type": "float",  "def": "360" },
+        { "key": "duration", "label": "Duration (s)", "type": "float",  "def": "0.5" },
+        { "key": "ease",     "label": "Ease",         "type": "ease",   "def": "quadOut" },
+        { "key": "tag",      "label": "Tag",          "type": "tag" }
+      ],
+      "template": "doTweenAngle($tag, $target, $value, $duration, $ease)" },
+
+    { "id": "tween_x", "name": "Tween X", "category": "Visual",
+      "desc": "Move an object horizontally (absolute X).",
+      "fields": [
+        { "key": "target",   "label": "Target",       "type": "object", "def": "boyfriend" },
+        { "key": "value",    "label": "X",            "type": "float",  "def": "0" },
+        { "key": "duration", "label": "Duration (s)", "type": "float",  "def": "0.5" },
+        { "key": "ease",     "label": "Ease",         "type": "ease",   "def": "quadOut" },
+        { "key": "tag",      "label": "Tag",          "type": "tag" }
+      ],
+      "template": "doTweenX($tag, $target, $value, $duration, $ease)" },
+
+    { "id": "tween_y", "name": "Tween Y", "category": "Visual",
+      "desc": "Move an object vertically (absolute Y).",
+      "fields": [
+        { "key": "target",   "label": "Target",       "type": "object", "def": "boyfriend" },
+        { "key": "value",    "label": "Y",            "type": "float",  "def": "0" },
+        { "key": "duration", "label": "Duration (s)", "type": "float",  "def": "0.5" },
+        { "key": "ease",     "label": "Ease",         "type": "ease",   "def": "quadOut" },
+        { "key": "tag",      "label": "Tag",          "type": "tag" }
+      ],
+      "template": "doTweenY($tag, $target, $value, $duration, $ease)" },
+
+    { "id": "tween_position", "name": "Tween Position", "category": "Visual",
+      "desc": "Move an object to an absolute X/Y (two tweens).",
+      "fields": [
+        { "key": "target",   "label": "Target",       "type": "object", "def": "boyfriend" },
+        { "key": "x",        "label": "X",            "type": "float",  "def": "0" },
+        { "key": "y",        "label": "Y",            "type": "float",  "def": "0" },
+        { "key": "duration", "label": "Duration (s)", "type": "float",  "def": "0.5" },
+        { "key": "ease",     "label": "Ease",         "type": "ease",   "def": "quadOut" },
+        { "key": "tag",      "label": "Tag X",        "type": "tag" },
+        { "key": "tag2",     "label": "Tag Y",        "type": "tag" }
+      ],
+      "template": "doTweenX($tag, $target, $x, $duration, $ease)\ndoTweenY($tag2, $target, $y, $duration, $ease)" },
+
+    { "id": "tween_scale", "name": "Tween Scale", "category": "Visual",
+      "desc": "Scale an object (same value for X and Y). Tweens the .scale property; test in-game.",
+      "fields": [
+        { "key": "target",   "label": "Target",       "type": "object", "def": "boyfriend" },
+        { "key": "value",    "label": "Scale",        "type": "float",  "def": "1.5" },
+        { "key": "duration", "label": "Duration (s)", "type": "float",  "def": "0.5" },
+        { "key": "ease",     "label": "Ease",         "type": "ease",   "def": "quadOut" },
+        { "key": "tag",      "label": "Tag X",        "type": "tag" },
+        { "key": "tag2",     "label": "Tag Y",        "type": "tag" }
+      ],
+      "template": "doTweenX($tag, $target .. '.scale', $value, $duration, $ease)\ndoTweenY($tag2, $target .. '.scale', $value, $duration, $ease)" },
+
+    { "id": "tween_color", "name": "Tween Color", "category": "Visual",
+      "desc": "Tint an object with a color.",
+      "fields": [
+        { "key": "target",   "label": "Target",       "type": "object", "def": "boyfriend" },
+        { "key": "color",    "label": "Color",        "type": "color",  "def": "FF0000" },
+        { "key": "duration", "label": "Duration (s)", "type": "float",  "def": "0.5" },
+        { "key": "ease",     "label": "Ease",         "type": "ease",   "def": "linear" },
+        { "key": "tag",      "label": "Tag",          "type": "tag" }
+      ],
+      "template": "doTweenColor($tag, $target, $color, $duration, $ease)" },
+
+    { "id": "set_property", "name": "Set Property", "category": "Visual",
+      "desc": "Set any property of an object, e.g. alpha, angle, x. Needs setProperty (ReflectionFunctions).",
+      "fields": [
+        { "key": "target",   "label": "Target",       "type": "object", "def": "boyfriend" },
+        { "key": "property", "label": "Property",     "type": "text",   "def": "alpha" },
+        { "key": "value",    "label": "Value",        "type": "auto",   "def": "1" }
+      ],
+      "template": "setProperty($target .. '.' .. $property, $value)" },
+
+    { "id": "set_visible", "name": "Set Visible", "category": "Visual",
+      "desc": "Show or hide an object. Needs setProperty (ReflectionFunctions).",
+      "fields": [
+        { "key": "target",   "label": "Target",       "type": "object", "def": "boyfriend" },
+        { "key": "value",    "label": "Visible",      "type": "bool",   "def": "true" }
+      ],
+      "template": "setProperty($target .. '.visible', $value)" },
+
+    { "id": "play_animation", "name": "Play Animation", "category": "Visual",
+      "desc": "Play an animation on a character.",
+      "fields": [
+        { "key": "target", "label": "Character",  "type": "object", "def": "boyfriend" },
+        { "key": "anim",   "label": "Animation",  "type": "text",   "def": "singUP" },
+        { "key": "force",  "label": "Force",      "type": "bool",   "def": "true" }
+      ],
+      "template": "playAnim($target, $anim, $force)" },
+
+    { "id": "add_sprite", "name": "Add Sprite", "category": "Visual",
+      "desc": "Create a sprite from an image and add it to the screen.",
+      "fields": [
+        { "key": "sprite", "label": "Sprite tag", "type": "text",  "def": "mySprite" },
+        { "key": "image",  "label": "Image",      "type": "image", "def": "menuBG" },
+        { "key": "x",      "label": "X",          "type": "float", "def": "0" },
+        { "key": "y",      "label": "Y",          "type": "float", "def": "0" },
+        { "key": "front",  "label": "In front of characters", "type": "bool", "def": "false" }
+      ],
+      "template": "makeLuaSprite($sprite, $image, $x, $y)\naddLuaSprite($sprite, $front)" },
+
+    { "id": "remove_sprite", "name": "Remove Sprite", "category": "Visual",
+      "desc": "Remove a sprite created with Add Sprite.",
+      "fields": [
+        { "key": "sprite", "label": "Sprite tag", "type": "text", "def": "mySprite" }
+      ],
+      "template": "removeLuaSprite($sprite, true)" },
+
+    { "id": "play_sound", "name": "Play Sound", "category": "Audio",
+      "desc": "Play a sound effect once.",
+      "fields": [
+        { "key": "sound",  "label": "Sound",  "type": "sound", "def": "confirmMenu" },
+        { "key": "volume", "label": "Volume", "type": "float", "def": "1" }
+      ],
+      "template": "playSound($sound, $volume)" },
+
+    { "id": "play_sound_tagged", "name": "Play Sound (tagged)", "category": "Audio",
+      "desc": "Play a sound with a tag, so it can be stopped or faded later.",
+      "fields": [
+        { "key": "sound",    "label": "Sound",     "type": "sound", "def": "confirmMenu" },
+        { "key": "volume",   "label": "Volume",    "type": "float", "def": "1" },
+        { "key": "soundTag", "label": "Sound tag", "type": "text",  "def": "mySound" },
+        { "key": "loop",     "label": "Loop",      "type": "bool",  "def": "false" }
+      ],
+      "template": "playSound($sound, $volume, $soundTag, $loop)" },
+
+    { "id": "play_music", "name": "Play Music", "category": "Audio",
+      "desc": "Play a track from the music folder.",
+      "fields": [
+        { "key": "sound",  "label": "Music",  "type": "text",  "def": "freakyMenu" },
+        { "key": "volume", "label": "Volume", "type": "float", "def": "1" },
+        { "key": "loop",   "label": "Loop",   "type": "bool",  "def": "false" }
+      ],
+      "template": "playMusic($sound, $volume, $loop)" },
+
+    { "id": "stop_sound", "name": "Stop Sound", "category": "Audio",
+      "desc": "Stop a tagged sound.",
+      "fields": [
+        { "key": "soundTag", "label": "Sound tag", "type": "text", "def": "mySound" }
+      ],
+      "template": "stopSound($soundTag)" },
+
+    { "id": "set_sound_volume", "name": "Set Sound Volume", "category": "Audio",
+      "desc": "Change the volume of a tagged sound.",
+      "fields": [
+        { "key": "soundTag", "label": "Sound tag", "type": "text",  "def": "mySound" },
+        { "key": "volume",   "label": "Volume",    "type": "float", "def": "0.5" }
+      ],
+      "template": "setSoundVolume($soundTag, $volume)" },
+
+    { "id": "fade_sound_out", "name": "Fade Sound", "category": "Audio",
+      "desc": "Fade a tagged sound to a volume.",
+      "fields": [
+        { "key": "soundTag", "label": "Sound tag",    "type": "text",  "def": "mySound" },
+        { "key": "duration", "label": "Duration (s)", "type": "float", "def": "1" },
+        { "key": "volume",   "label": "To volume",    "type": "float", "def": "0" }
+      ],
+      "template": "soundFadeOut($soundTag, $duration, $volume)" },
+
+    { "id": "camera_shake", "name": "Camera Shake", "category": "Camera",
+      "desc": "Shake a camera.",
+      "fields": [
+        { "key": "camera",    "label": "Camera",    "type": "dropdown", "def": "camGame", "options": ["camGame", "camHUD", "camOther"] },
+        { "key": "intensity", "label": "Intensity", "type": "float",    "def": "0.02" },
+        { "key": "duration",  "label": "Duration (s)", "type": "float", "def": "0.5" }
+      ],
+      "template": "cameraShake($camera, $intensity, $duration)" },
+
+    { "id": "camera_flash", "name": "Camera Flash", "category": "Camera",
+      "desc": "Flash a camera with a color.",
+      "fields": [
+        { "key": "camera",   "label": "Camera",       "type": "dropdown", "def": "camGame", "options": ["camGame", "camHUD", "camOther"] },
+        { "key": "color",    "label": "Color",        "type": "color",    "def": "FFFFFF" },
+        { "key": "duration", "label": "Duration (s)", "type": "float",    "def": "0.5" },
+        { "key": "force",    "label": "Force",        "type": "bool",     "def": "true" }
+      ],
+      "template": "cameraFlash($camera, $color, $duration, $force)" },
+
+    { "id": "camera_fade", "name": "Camera Fade", "category": "Camera",
+      "desc": "Fade a camera to a color (or from it, with Reverse).",
+      "fields": [
+        { "key": "camera",   "label": "Camera",       "type": "dropdown", "def": "camGame", "options": ["camGame", "camHUD", "camOther"] },
+        { "key": "color",    "label": "Color",        "type": "color",    "def": "000000" },
+        { "key": "duration", "label": "Duration (s)", "type": "float",    "def": "1" },
+        { "key": "force",    "label": "Force",        "type": "bool",     "def": "true" },
+        { "key": "reverse",  "label": "Reverse (fade from the color)", "type": "bool", "def": "false" }
+      ],
+      "template": "cameraFade($camera, $color, $duration, $force, $reverse)" },
+
+    { "id": "camera_zoom", "name": "Camera Zoom", "category": "Camera",
+      "desc": "Tween the zoom of a camera.",
+      "fields": [
+        { "key": "camera",   "label": "Camera",       "type": "dropdown", "def": "camGame", "options": ["camGame", "camHUD", "camOther"] },
+        { "key": "zoom",     "label": "Zoom",         "type": "float",    "def": "1" },
+        { "key": "duration", "label": "Duration (s)", "type": "float",    "def": "0.5" },
+        { "key": "ease",     "label": "Ease",         "type": "ease",     "def": "quadOut" },
+        { "key": "tag",      "label": "Tag",          "type": "tag" }
+      ],
+      "template": "doTweenZoom($tag, $camera, $zoom, $duration, $ease)" },
+
+    { "id": "camera_target", "name": "Camera Target", "category": "Camera",
+      "desc": "Move the camera to a character.",
+      "fields": [
+        { "key": "target", "label": "Target", "type": "dropdown", "def": "boyfriend", "options": ["boyfriend", "dad", "gf"] }
+      ],
+      "template": "cameraSetTarget($target)" },
+
+    { "id": "change_character", "name": "Change Character", "category": "Gameplay",
+      "desc": "Swap a character (uses the built-in event). May lag the first time the character is loaded.",
+      "fields": [
+        { "key": "position",  "label": "Who",       "type": "dropdown",      "def": "bf", "options": ["bf", "dad", "gf"] },
+        { "key": "character", "label": "Character", "type": "characterfile", "def": "bf" }
+      ],
+      "template": "triggerEvent('Change Character', $position, $character)" },
+
+    { "id": "change_stage", "name": "Change Stage", "category": "Gameplay",
+      "desc": "Switch to another stage (uses the built-in event).",
+      "fields": [
+        { "key": "stage", "label": "Stage", "type": "stage", "def": "stage" }
+      ],
+      "template": "triggerEvent('Change Stage', $stage)" },
+
+    { "id": "add_health", "name": "Add Health", "category": "Gameplay",
+      "desc": "Add (or remove, with a negative number) health. Full health is 2.",
+      "fields": [
+        { "key": "amount", "label": "Amount", "type": "float", "def": "0.1" }
+      ],
+      "template": "addHealth($amount)" },
+
+    { "id": "set_health", "name": "Set Health", "category": "Gameplay",
+      "desc": "Set health to a value. Full health is 2.",
+      "fields": [
+        { "key": "amount", "label": "Health", "type": "float", "def": "1" }
+      ],
+      "template": "setHealth($amount)" },
+
+    { "id": "add_score", "name": "Add Score", "category": "Gameplay",
+      "desc": "Add (or remove) score.",
+      "fields": [
+        { "key": "amount", "label": "Amount", "type": "int", "def": "100" }
+      ],
+      "template": "addScore($amount)" },
+
+    { "id": "add_misses", "name": "Add Misses", "category": "Gameplay",
+      "desc": "Add (or remove) misses.",
+      "fields": [
+        { "key": "amount", "label": "Amount", "type": "int", "def": "1" }
+      ],
+      "template": "addMisses($amount)" },
+
+    { "id": "trigger_event", "name": "Trigger Event", "category": "Gameplay",
+      "desc": "Fire another event. Do not call this same event: it would loop forever.",
+      "fields": [
+        { "key": "event",  "label": "Event",   "type": "text", "def": "Hey!" },
+        { "key": "value1", "label": "Value 1", "type": "text", "def": "" },
+        { "key": "value2", "label": "Value 2", "type": "text", "def": "" }
+      ],
+      "template": "triggerEvent($event, $value1, $value2)" },
+
+    { "id": "wait", "name": "Wait", "category": "Other", "special": "wait",
+      "desc": "Pause the event. Every block after this one runs after the delay.",
+      "fields": [
+        { "key": "seconds", "label": "Seconds", "type": "float", "def": "0.5" }
+      ],
+      "template": "" },
+
+    { "id": "debug_print", "name": "Debug Print", "category": "Other",
+      "desc": "Print a message on screen (handy for testing).",
+      "fields": [
+        { "key": "text", "label": "Text", "type": "text", "def": "hello" }
+      ],
+      "template": "debugPrint($text)" },
+
+    { "id": "custom_lua", "name": "Custom Lua", "category": "Other",
+      "desc": "One line of your own Lua. Parameters are normal variables (e.g. intensity); $name also works.",
+      "fields": [
+        { "key": "code", "label": "Lua", "type": "code", "def": "-- your code here" }
+      ],
+      "template": "$code" }
+
+  ]
+}
