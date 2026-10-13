@@ -197,15 +197,15 @@
       "template": "cameraFlash($camera, $color, $duration, $force)" },
 
     { "id": "camera_fade", "name": "Camera Fade", "category": "Camera",
-      "desc": "Fade a camera to a color (or from it, with Reverse).",
+      "desc": "Fade a camera to a color (or from it if Fade to color is unchecked).",
       "fields": [
-        { "key": "camera",   "label": "Camera",       "type": "dropdown", "def": "camGame", "options": ["camGame", "camHUD", "camOther"] },
-        { "key": "color",    "label": "Color",        "type": "color",    "def": "000000" },
-        { "key": "duration", "label": "Duration (s)", "type": "float",    "def": "1" },
-        { "key": "force",    "label": "Force",        "type": "bool",     "def": "true" },
-        { "key": "reverse",  "label": "Reverse (fade from the color)", "type": "bool", "def": "false" }
+        { "key": "camera",      "label": "Camera",       "type": "dropdown", "def": "camGame", "options": ["camGame", "camHUD", "camOther"] },
+        { "key": "color",       "label": "Color",        "type": "color",    "def": "000000" },
+        { "key": "duration",    "label": "Duration (s)", "type": "float",    "def": "1" },
+        { "key": "force",       "label": "Force",        "type": "bool",     "def": "true" },
+        { "key": "fadeToColor", "label": "Fade to color", "type": "bool",    "def": "true" }
       ],
-      "template": "cameraFade($camera, $color, $duration, $force, $reverse)" },
+      "template": "cameraFade($camera, $color, $duration, $force, $fadeToColor)" }
 
     { "id": "camera_zoom", "name": "Camera Zoom", "category": "Camera",
       "desc": "Tween the zoom of a camera.",
