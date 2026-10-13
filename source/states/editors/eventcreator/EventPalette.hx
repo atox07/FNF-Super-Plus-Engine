@@ -5,6 +5,7 @@ import sys.FileSystem;
 import sys.io.File;
 import backend.Mods;
 import backend.Paths;
+import states.editors.eventcreator.EventDef;
 
 /**
  * Palette dei blocchi, caricata da  data/eventCreator/blocks.json
