@@ -130,9 +130,9 @@ You need to have:
 - **Change Stage Event:** Built-in hardcoded stage changing event designed for instantaneous switching with zero frame drops or lag.
 - **Character JSON Generator (Anims from XML):** Added a new "Anims from XML" button in the Character Editor that lets you pick any .xml + .png spritesheet from images/characters/ and automatically generates the character's animations json.
 -  **MIDI to Chart System (Import MIDI):** Added a new "Import MIDI..." option in the Chart Editor that generates chart notes from .mid / .midi files.
-- **Shader Compatibility Layer:** Automatic adaptation of legacy (0.6.3) (COMING SOON IN 1.2)
-- **Event Creator:** Full in-game visual editor for custom Lua events. (COMING SOON IN 1.2)
-- ### Menu Scripting MainMenuState can now load Lua/HScript from `scripts/menus/MainMenuState/init.lua` (or `.hx`) (COMING SOON IN 1.2)
+- **Shader Compatibility Layer:** Automatic adaptation of legacy (0.6.3)
+- **Event Creator:** Full in-game visual editor for custom Lua events. 
+- **Menu Scripting:** MainMenuState can now load Lua/HScript from scripts/menus/MainMenuState/init.lua (or .hx)
 
 # Features inherited from Plus Engine (after 1.0.4)
 
