@@ -28,7 +28,7 @@ using StringTools;
  *   mods/<mod>/custom_events/<ID>.txt  -> descrizione (mostrata dal Chart Editor)
  * Senza mod attiva i file vanno in mods/custom_events/ (cartella globale).
  *
- * Tab: Metadata (fatta), Parameters (fatta), Actions (prossimo passo), Code (anteprima live).
+ * Tab: Metadata, Parameters, Actions, Code (anteprima live).
  * Accesso: Chart Editor -> File -> Custom Events...
  *
  * Regole PsychUI da ricordare (verificate sul sorgente dei widget):
@@ -47,12 +47,27 @@ class EventCreatorState extends MusicBeatState implements PsychUIEventHandler.Ps
 	static inline var BOX_W:Int = 900;
 	static inline var BOX_H:Int = 560;
 	static inline var MAX_PARAMS:Int = 12;
+	static inline var MAX_BLOCKS:Int = 20;
+	static inline var MAX_BLOCK_FIELDS:Int = 8;
+	static inline var PALETTE_VISIBLE:Int = 12;
+	static inline var PARAM_PICKER_VISIBLE:Int = 10;
 
 	/** Righe di codice mostrate nel tab Code (il FlxText non scrolla ne' viene clippato). */
 	static inline var CODE_PREVIEW_LINES:Int = 34;
 
-	/** Origine x del pannello di dettaglio nel tab Parameters. */
+	/** Origine x del pannello di dettaglio nel tab Parameters / Actions. */
 	static inline var PX:Int = 275;
+
+	/** Ease comuni (nomi accettati da LuaUtils.getTweenEaseByString). */
+	static final EASE_OPTIONS:Array<String> = [
+		'linear', 'quadIn', 'quadOut', 'quadInOut', 'cubeIn', 'cubeOut', 'cubeInOut',
+		'quartIn', 'quartOut', 'quintIn', 'quintOut', 'sineIn', 'sineOut', 'sineInOut',
+		'expoIn', 'expoOut', 'circIn', 'circOut', 'backIn', 'backOut', 'backInOut',
+		'elasticOut', 'bounceOut', 'smoothStepInOut'
+	];
+
+	/** Target oggetti sempre presenti in PlayState. */
+	static final OBJECT_OPTIONS:Array<String> = ['boyfriend', 'dad', 'gf'];
 
 	// ----------------------------------------------------------------
 	// Dati del progetto
@@ -109,6 +124,47 @@ class EventCreatorState extends MusicBeatState implements PsychUIEventHandler.Ps
 	var pDefSwatch:FlxSprite;
 	var pDefDD:PsychUIDropDownMenu;
 
+	// Tab Actions: colonna sinistra
+	var selBlock:Int = -1;
+	var actionRows:Array<PsychUIButton> = [];
+	var actionToolbar:Array<PsychUIButton> = [];
+	var actionCountText:FlxText;
+
+	// Tab Actions: pannello di dettaglio
+	var aHintText:FlxText;
+	var aTitleText:FlxText;
+	var aDescText:FlxText;
+	var aPreviewText:FlxText;
+	var aDetailAll:Array<FlxSprite> = [];
+	var aFieldLbls:Array<FlxText> = [];
+	var aFieldInputs:Array<PsychUIInputText> = [];
+	var aFieldDDs:Array<PsychUIDropDownMenu> = [];
+	var aFieldSwatches:Array<FlxSprite> = [];
+	var aFieldBindBtns:Array<PsychUIButton> = [];
+	/** Chiave del BlockFieldDef attualmente mappata su ogni slot (o null se vuoto). */
+	var aFieldKeys:Array<String> = [];
+
+	// Palette popup
+	var paletteOpen:Bool = false;
+	var paletteOverlay:FlxSprite;
+	var palettePanel:FlxSprite;
+	var paletteTitle:FlxText;
+	var paletteSearch:PsychUIInputText;
+	var paletteHint:FlxText;
+	var paletteRows:Array<PsychUIButton> = [];
+	var paletteScroll:Int = 0;
+	var paletteFiltered:Array<BlockDef> = [];
+	var paletteWidgets:Array<FlxSprite> = [];
+
+	// Param picker popup
+	var paramPickerOpen:Bool = false;
+	var paramPickerOverlay:FlxSprite;
+	var paramPickerPanel:FlxSprite;
+	var paramPickerTitle:FlxText;
+	var paramPickerRows:Array<PsychUIButton> = [];
+	var paramPickerFieldIdx:Int = -1;
+	var paramPickerWidgets:Array<FlxSprite> = [];
+
 	// Tab Code
 	var codePreview:FlxText;
 
@@ -160,11 +216,13 @@ class EventCreatorState extends MusicBeatState implements PsychUIEventHandler.Ps
 
 		setupMetadataTab();
 		setupParametersTab();
-		setupActionsTabPlaceholder();
+		setupActionsTab();
 		setupCodeTab();
 
 		refreshParamRows();
 		loadParamIntoPanel();
+		refreshActionRows();
+		loadBlockIntoDetail();
 		refreshCodePreview();
 		refreshSummary();
 
@@ -930,25 +988,717 @@ class EventCreatorState extends MusicBeatState implements PsychUIEventHandler.Ps
 	}
 
 	// ================================================================
-	// TAB ACTIONS (placeholder — prossimo passo)
+	// TAB ACTIONS  (lista a sinistra, campi del blocco a destra)
 	// ================================================================
-	function setupActionsTabPlaceholder():Void
+	function setupActionsTab():Void
 	{
 		var tab = mainBox.getTab('Actions').menu;
-		var palette:String = (EventPalette.blocks.length > 0)
-			? 'Palette loaded: ' + EventPalette.blocks.length + ' blocks.'
-			: 'PALETTE NOT LOADED: ' + EventPalette.loadError;
 
-		var hint = new FlxText(15, 20, BOX_W - 40,
-			'Actions tab: coming in the next step.\n\n'
-			+ 'Here you will add blocks from the palette (Play Sound, Tween Alpha, Change Character, ...). '
-			+ 'Blocks run top to bottom inside onEvent(); a Wait block delays everything after it.\n\n'
-			+ palette
-			+ '\n\nUntil then, use "Load example (Glitch Effect)" in the Metadata tab to see what blocks generate in the Code tab.',
-			13);
-		hint.setFormat(Paths.font('vcr.ttf'), 13, 0xFF909090, LEFT);
-		hint.wordWrap = true;
-		tab.add(hint);
+		// ---------------- colonna sinistra: lista blocchi ----------------
+		tab.add(makeLabel('Blocks in event:', 15, 20));
+		for (i in 0...MAX_BLOCKS)
+		{
+			var idx:Int = i;
+			var row = new PsychUIButton(15, 38 + i * 20, '', function() selectBlock(idx), 240, 18);
+			actionRows.push(row);
+			tab.add(row);
+		}
+
+		var by:Int = 38 + MAX_BLOCKS * 20 + 6;
+		actionToolbar.push(new PsychUIButton(15, by, '+ Add block...', openPalette, 240));
+		actionToolbar.push(new PsychUIButton(15, by + 26, 'Delete', deleteBlock, 70));
+		actionToolbar.push(new PsychUIButton(90, by + 26, 'Up', function() moveBlock(-1), 45));
+		actionToolbar.push(new PsychUIButton(140, by + 26, 'Down', function() moveBlock(1), 50));
+		actionToolbar.push(new PsychUIButton(195, by + 26, 'Dup', duplicateBlock, 60));
+		for (b in actionToolbar)
+			tab.add(b);
+
+		actionCountText = new FlxText(15, by + 54, 245, '', 10);
+		actionCountText.setFormat(Paths.font('vcr.ttf'), 10, 0xFF909090, LEFT);
+		actionCountText.wordWrap = true;
+		tab.add(actionCountText);
+
+		// ---------------- pannello di dettaglio ----------------
+		aHintText = new FlxText(PX, 20, 590,
+			'Actions are the Lua calls that run when the event fires.\n\n'
+			+ 'Blocks run top to bottom. A Wait block delays everything after it '
+			+ '(via runTimer + onTimerCompleted).\n\n'
+			+ 'Press "+ Add block..." to open the palette.',
+			12);
+		aHintText.setFormat(Paths.font('vcr.ttf'), 12, 0xFF909090, LEFT);
+		aHintText.wordWrap = true;
+		tab.add(aHintText);
+
+		aTitleText = new FlxText(PX, 20, 590, '', 14);
+		aTitleText.setFormat(Paths.font('vcr.ttf'), 14, FlxColor.WHITE, LEFT);
+		aDetailAll.push(aTitleText);
+		tab.add(aTitleText);
+
+		aDescText = new FlxText(PX, 42, 590, '', 11);
+		aDescText.setFormat(Paths.font('vcr.ttf'), 11, 0xFF909090, LEFT);
+		aDescText.wordWrap = true;
+		aDetailAll.push(aDescText);
+		tab.add(aDescText);
+
+		// Pool di campi (creati una volta sola)
+		for (i in 0...MAX_BLOCK_FIELDS)
+		{
+			var idx:Int = i;
+			var fy:Float = 78 + i * 36;
+
+			var lbl = makeLabel('', PX, fy);
+			aFieldLbls.push(lbl);
+			aDetailAll.push(lbl);
+			tab.add(lbl);
+
+			var inp = new PsychUIInputText(PX + 130, fy, 320, '', 10);
+			inp.onChange = function(_, cur:String) onBlockFieldChangedByIndex(idx, cur);
+			aFieldInputs.push(inp);
+			aDetailAll.push(inp);
+			tab.add(inp);
+
+			var sw = new FlxSprite(PX + 455, fy).makeGraphic(20, 20, FlxColor.WHITE);
+			aFieldSwatches.push(sw);
+			aDetailAll.push(sw);
+			tab.add(sw);
+
+			var bind = new PsychUIButton(PX + 480, fy, '$', function() openParamPicker(idx), 28, 20);
+			bind.normalStyle.bgColor = 0xFF3A6A9A;
+			bind.normalStyle.textColor = FlxColor.WHITE;
+			aFieldBindBtns.push(bind);
+			aDetailAll.push(bind);
+			tab.add(bind);
+
+			aFieldKeys.push(null);
+		}
+
+		// Dropdown per ultimi: lista aperta sopra tutto. Pool separato dal text input.
+		for (i in 0...MAX_BLOCK_FIELDS)
+		{
+			var idx:Int = i;
+			var fy:Float = 78 + i * 36;
+			var dd = new PsychUIDropDownMenu(PX + 130, fy, ['-'], function(_:Int, label:String)
+			{
+				if (label == null || label.startsWith('('))
+					return;
+				onBlockFieldChangedByIndex(idx, label);
+			}, 320, 8);
+			aFieldDDs.push(dd);
+			aDetailAll.push(dd);
+			tab.add(dd);
+		}
+
+		aPreviewText = new FlxText(PX, 380, 590, '', 11);
+		aPreviewText.setFormat(Paths.font('vcr.ttf'), 11, 0xFF9FDFFF, LEFT);
+		aPreviewText.wordWrap = true;
+		aDetailAll.push(aPreviewText);
+		tab.add(aPreviewText);
+
+		setupPalettePopup(tab);
+		setupParamPickerPopup(tab);
+	}
+
+	function curBlock():BlockInstance
+		return (selBlock >= 0 && selBlock < project.blocks.length) ? project.blocks[selBlock] : null;
+
+	function curBlockDef():BlockDef
+	{
+		var b = curBlock();
+		return (b != null) ? EventPalette.get(b.id) : null;
+	}
+
+	/** true mentre un popup Actions e' aperto (i click PsychUI ignorano lo z-order). */
+	function actionsBusy():Bool
+		return paletteOpen || paramPickerOpen;
+
+	/**
+	 * Nasconde lista/dettaglio/toolbar dietro il popup.
+	 * exists=false (non solo visible) cosi' i click non passano.
+	 */
+	function setActionsChromeVisible(v:Bool):Void
+	{
+		for (b in actionToolbar)
+			show(b, v);
+
+		if (actionCountText != null)
+			show(actionCountText, v);
+
+		if (!v)
+		{
+			for (row in actionRows)
+				show(row, false);
+			showAll(aDetailAll, false);
+			show(aHintText, false);
+		}
+		else
+		{
+			refreshActionRows();
+			loadBlockIntoDetail();
+		}
+	}
+
+	function blockRowLabel(inst:BlockInstance, index:Int):String
+	{
+		var def:BlockDef = EventPalette.get(inst.id);
+		var name:String = (def != null) ? def.name : ('?' + inst.id);
+		var s:String = '[' + (index + 1) + '] ' + name;
+		if (s.length > 34)
+			s = s.substr(0, 33) + '~';
+		return s;
+	}
+
+	function refreshActionRows():Void
+	{
+		if (actionRows.length == 0)
+			return;
+
+		for (i in 0...actionRows.length)
+		{
+			var row = actionRows[i];
+			if (i < project.blocks.length)
+			{
+				row.exists = true;
+				row.label = blockRowLabel(project.blocks[i], i);
+				styleBtn(row, i == selBlock);
+			}
+			else
+				row.exists = false;
+		}
+
+		if (actionCountText != null)
+			actionCountText.text = project.blocks.length + ' / ' + MAX_BLOCKS + ' blocks\n'
+				+ 'Wait delays everything after it.';
+	}
+
+	function selectBlock(i:Int):Void
+	{
+		if (actionsBusy() || i < 0 || i >= project.blocks.length)
+			return;
+		PsychUIInputText.focusOn = null;
+		selBlock = i;
+		refreshActionRows();
+		loadBlockIntoDetail();
+	}
+
+	function actionChanged():Void
+	{
+		unsavedProgress = true;
+		refreshActionRows();
+		refreshSummary();
+		updateBlockPreview();
+		refreshCodePreview();
+		setStatus('Modified.');
+	}
+
+	/** Mostra/nasconde i widget del dettaglio e li riempie col blocco selezionato. */
+	function loadBlockIntoDetail():Void
+	{
+		var inst = curBlock();
+		var def = curBlockDef();
+		var has:Bool = (inst != null && def != null);
+
+		showAll(aDetailAll, false);
+		show(aHintText, !has);
+		if (!has)
+		{
+			if (aPreviewText != null)
+				aPreviewText.text = '';
+			return;
+		}
+
+		show(aTitleText, true);
+		show(aDescText, true);
+		show(aPreviewText, true);
+		aTitleText.text = 'Detail of "' + def.name + '"';
+		aDescText.text = (def.desc != null && def.desc.length > 0) ? def.desc : (def.category + ' block');
+
+		// Campi visibili (skip tag)
+		var slot:Int = 0;
+		for (f in def.fields)
+		{
+			if (f.type == 'tag')
+				continue;
+			if (slot >= MAX_BLOCK_FIELDS)
+				break;
+
+			aFieldKeys[slot] = f.key;
+			configureBlockFieldWidget(slot, f, inst);
+			slot++;
+		}
+		for (i in slot...MAX_BLOCK_FIELDS)
+		{
+			aFieldKeys[i] = null;
+			show(aFieldLbls[i], false);
+			show(aFieldInputs[i], false);
+			show(aFieldDDs[i], false);
+			show(aFieldSwatches[i], false);
+			show(aFieldBindBtns[i], false);
+		}
+
+		updateBlockPreview();
+	}
+
+	function usesDropdown(fieldType:String):Bool
+	{
+		return fieldType == 'ease'
+			|| fieldType == 'dropdown'
+			|| fieldType == 'object'
+			|| fieldType == 'characterfile'
+			|| fieldType == 'sound'
+			|| fieldType == 'image'
+			|| fieldType == 'stage';
+	}
+
+	function optionsForField(f:BlockFieldDef):Array<String>
+	{
+		switch (f.type)
+		{
+			case 'ease':
+				return EASE_OPTIONS.copy();
+			case 'object':
+				return OBJECT_OPTIONS.copy();
+			case 'dropdown':
+				return (f.options != null) ? f.options.copy() : [];
+			case 'characterfile':
+				return EventPresets.list('characterfile');
+			case 'sound':
+				return EventPresets.list('sound');
+			case 'image':
+				return EventPresets.list('image');
+			case 'stage':
+				return EventPresets.list('stage');
+			default:
+				return [];
+		}
+	}
+
+	function configureBlockFieldWidget(slot:Int, f:BlockFieldDef, inst:BlockInstance):Void
+	{
+		var raw:String = inst.get(f.key);
+		if (raw == null)
+			raw = (f.def != null) ? f.def : '';
+
+		aFieldLbls[slot].text = f.label + ':';
+		show(aFieldLbls[slot], true);
+		show(aFieldBindBtns[slot], true);
+
+		var isDD:Bool = usesDropdown(f.type);
+		var isColor:Bool = (f.type == 'color');
+
+		show(aFieldInputs[slot], !isDD);
+		show(aFieldDDs[slot], isDD);
+		show(aFieldSwatches[slot], isColor);
+
+		if (isDD)
+		{
+			var items:Array<String> = optionsForField(f);
+			var placeholder:Bool = false;
+			if (items.length == 0)
+			{
+				items = ['(none found)'];
+				placeholder = true;
+			}
+			else if (items.indexOf(raw) < 0 && raw != null && raw != '')
+				items.insert(0, raw);
+
+			aFieldDDs[slot].list = items;
+			aFieldDDs[slot].selectedLabel = placeholder ? items[0] : ((items.indexOf(raw) >= 0) ? raw : items[0]);
+			if (!placeholder && (inst.get(f.key) == null || inst.get(f.key) == ''))
+				inst.set(f.key, aFieldDDs[slot].selectedLabel);
+		}
+		else
+		{
+			aFieldInputs[slot].text = raw;
+			if (isColor)
+				updateBlockSwatch(slot, raw);
+		}
+	}
+
+	function updateBlockSwatch(slot:Int, hex:String):Void
+	{
+		var h:String = (hex == null) ? '' : StringTools.trim(hex);
+		if (h.charAt(0) == '#')
+			h = h.substr(1);
+		if (h.charAt(0) == '$')
+		{
+			aFieldSwatches[slot].color = 0xFF808080;
+			return;
+		}
+		var c:Null<FlxColor> = FlxColor.fromString('#' + h);
+		aFieldSwatches[slot].color = (c != null) ? FlxColor.fromRGB(c.red, c.green, c.blue) : FlxColor.WHITE;
+	}
+
+	function onBlockFieldChangedByIndex(slot:Int, value:String):Void
+	{
+		if (actionsBusy())
+			return;
+		var inst = curBlock();
+		var key:String = (slot >= 0 && slot < aFieldKeys.length) ? aFieldKeys[slot] : null;
+		if (inst == null || key == null)
+			return;
+
+		inst.set(key, value);
+		if (aFieldSwatches[slot] != null && aFieldSwatches[slot].exists)
+			updateBlockSwatch(slot, value);
+		actionChanged();
+	}
+
+	function updateBlockPreview():Void
+	{
+		if (aPreviewText == null)
+			return;
+		if (curBlock() == null)
+		{
+			aPreviewText.text = '';
+			return;
+		}
+		var lua:String = EventCodegen.previewBlock(project, selBlock);
+		aPreviewText.text = 'Preview:\n' + lua;
+	}
+
+	// ---------------- azioni sui blocchi ----------------
+
+	function addBlockFromPalette(def:BlockDef):Void
+	{
+		if (def == null)
+			return;
+		if (project.blocks.length >= MAX_BLOCKS)
+		{
+			setStatus('Maximum ' + MAX_BLOCKS + ' blocks.', true);
+			return;
+		}
+
+		PsychUIInputText.focusOn = null;
+		var inst = new BlockInstance(def.id);
+		for (f in def.fields)
+		{
+			if (f.type == 'tag')
+				continue;
+			inst.set(f.key, (f.def != null) ? f.def : '');
+		}
+		project.blocks.push(inst);
+		selBlock = project.blocks.length - 1;
+		closePalette();
+		loadBlockIntoDetail();
+		actionChanged();
+	}
+
+	function deleteBlock():Void
+	{
+		if (actionsBusy())
+			return;
+		var b = curBlock();
+		if (b == null)
+			return;
+		PsychUIInputText.focusOn = null;
+		project.blocks.remove(b);
+		selBlock = (project.blocks.length == 0) ? -1 : Std.int(Math.min(selBlock, project.blocks.length - 1));
+		loadBlockIntoDetail();
+		actionChanged();
+	}
+
+	function moveBlock(dir:Int):Void
+	{
+		if (actionsBusy())
+			return;
+		var b = curBlock();
+		var j:Int = selBlock + dir;
+		if (b == null || j < 0 || j >= project.blocks.length)
+			return;
+		PsychUIInputText.focusOn = null;
+		project.blocks[selBlock] = project.blocks[j];
+		project.blocks[j] = b;
+		selBlock = j;
+		loadBlockIntoDetail();
+		actionChanged();
+	}
+
+	function duplicateBlock():Void
+	{
+		if (actionsBusy())
+			return;
+		var b = curBlock();
+		if (b == null)
+			return;
+		if (project.blocks.length >= MAX_BLOCKS)
+		{
+			setStatus('Maximum ' + MAX_BLOCKS + ' blocks.', true);
+			return;
+		}
+
+		PsychUIInputText.focusOn = null;
+		var copy = new BlockInstance(b.id);
+		for (k in Reflect.fields(b.fields))
+			Reflect.setField(copy.fields, k, Reflect.field(b.fields, k));
+		project.blocks.insert(selBlock + 1, copy);
+		selBlock = selBlock + 1;
+		loadBlockIntoDetail();
+		actionChanged();
+	}
+
+	// ---------------- palette popup ----------------
+
+	function setupPalettePopup(tab:FlxSpriteGroup):Void
+	{
+		paletteOverlay = new FlxSprite(0, 0).makeGraphic(1, 1, 0xCC000000);
+		paletteOverlay.setGraphicSize(BOX_W, BOX_H - 30);
+		paletteOverlay.updateHitbox();
+		paletteWidgets.push(paletteOverlay);
+		tab.add(paletteOverlay);
+
+		palettePanel = new FlxSprite(40, 20).makeGraphic(1, 1, 0xFF1E1E2E);
+		palettePanel.setGraphicSize(BOX_W - 80, BOX_H - 70);
+		palettePanel.updateHitbox();
+		paletteWidgets.push(palettePanel);
+		tab.add(palettePanel);
+
+		paletteTitle = new FlxText(55, 30, BOX_W - 110, 'Add block — pick from the palette', 14);
+		paletteTitle.setFormat(Paths.font('vcr.ttf'), 14, FlxColor.WHITE, LEFT);
+		paletteWidgets.push(paletteTitle);
+		tab.add(paletteTitle);
+
+		paletteSearch = new PsychUIInputText(55, 55, 400, '', 10);
+		paletteSearch.onChange = function(_, cur:String)
+		{
+			paletteScroll = 0;
+			refreshPaletteRows(cur);
+		};
+		paletteWidgets.push(paletteSearch);
+		tab.add(paletteSearch);
+
+		paletteHint = new FlxText(470, 55, 350, 'Type to filter  |  ESC to close  |  mouse wheel to scroll', 11);
+		paletteHint.setFormat(Paths.font('vcr.ttf'), 11, 0xFF909090, LEFT);
+		paletteWidgets.push(paletteHint);
+		tab.add(paletteHint);
+
+		for (i in 0...PALETTE_VISIBLE)
+		{
+			var idx:Int = i;
+			var row = new PsychUIButton(55, 90 + i * 28, '', function()
+			{
+				var abs:Int = paletteScroll + idx;
+				if (abs >= 0 && abs < paletteFiltered.length)
+					addBlockFromPalette(paletteFiltered[abs]);
+			}, BOX_W - 120, 24);
+			paletteRows.push(row);
+			paletteWidgets.push(row);
+			tab.add(row);
+		}
+
+		setPaletteVisible(false);
+	}
+
+	function setPaletteVisible(v:Bool):Void
+	{
+		paletteOpen = v;
+		for (w in paletteWidgets)
+			show(w, v);
+	}
+
+	function openPalette():Void
+	{
+		if (paletteOpen)
+			return;
+		if (project.blocks.length >= MAX_BLOCKS)
+		{
+			setStatus('Maximum ' + MAX_BLOCKS + ' blocks.', true);
+			return;
+		}
+		closeParamPicker();
+		PsychUIInputText.focusOn = null;
+		paletteSearch.text = '';
+		paletteScroll = 0;
+		setActionsChromeVisible(false);
+		refreshPaletteRows('');
+		setPaletteVisible(true);
+		PsychUIInputText.focusOn = paletteSearch;
+	}
+
+	function closePalette():Void
+	{
+		if (!paletteOpen)
+			return;
+		PsychUIInputText.focusOn = null;
+		setPaletteVisible(false);
+		if (!paramPickerOpen)
+			setActionsChromeVisible(true);
+	}
+
+	function refreshPaletteRows(?filter:String):Void
+	{
+		var q:String = (filter != null) ? filter : paletteSearch.text;
+		q = (q == null) ? '' : q.trim().toLowerCase();
+
+		paletteFiltered = [];
+		for (b in EventPalette.blocks)
+		{
+			if (q.length == 0
+				|| b.name.toLowerCase().indexOf(q) >= 0
+				|| b.id.toLowerCase().indexOf(q) >= 0
+				|| (b.category != null && b.category.toLowerCase().indexOf(q) >= 0)
+				|| (b.desc != null && b.desc.toLowerCase().indexOf(q) >= 0))
+				paletteFiltered.push(b);
+		}
+
+		var maxScroll:Int = Std.int(Math.max(0, paletteFiltered.length - PALETTE_VISIBLE));
+		if (paletteScroll > maxScroll)
+			paletteScroll = maxScroll;
+		if (paletteScroll < 0)
+			paletteScroll = 0;
+
+		for (i in 0...paletteRows.length)
+		{
+			var abs:Int = paletteScroll + i;
+			var row = paletteRows[i];
+			if (abs < paletteFiltered.length)
+			{
+				var b:BlockDef = paletteFiltered[abs];
+				var desc:String = (b.desc != null && b.desc.length > 0) ? (' — ' + b.desc) : '';
+				var label:String = '[' + b.category + '] ' + b.name + desc;
+				if (label.length > 70)
+					label = label.substr(0, 69) + '~';
+				row.exists = paletteOpen;
+				row.label = label;
+			}
+			else
+				row.exists = false;
+		}
+
+		if (paletteHint != null && paletteOpen)
+		{
+			paletteHint.text = paletteFiltered.length + ' blocks'
+				+ ((paletteFiltered.length > PALETTE_VISIBLE) ? ('  (scroll ' + (paletteScroll + 1) + '-'
+					+ Std.int(Math.min(paletteScroll + PALETTE_VISIBLE, paletteFiltered.length)) + ')') : '')
+				+ '  |  ESC to close';
+		}
+	}
+
+	function updatePaletteScroll():Void
+	{
+		if (!paletteOpen)
+			return;
+		var wheel:Float = FlxG.mouse.wheel;
+		if (wheel == 0)
+			return;
+		paletteScroll -= Std.int(wheel);
+		refreshPaletteRows();
+	}
+
+	// ---------------- param picker popup ----------------
+
+	function setupParamPickerPopup(tab:FlxSpriteGroup):Void
+	{
+		paramPickerOverlay = new FlxSprite(0, 0).makeGraphic(1, 1, 0xCC000000);
+		paramPickerOverlay.setGraphicSize(BOX_W, BOX_H - 30);
+		paramPickerOverlay.updateHitbox();
+		paramPickerWidgets.push(paramPickerOverlay);
+		tab.add(paramPickerOverlay);
+
+		paramPickerPanel = new FlxSprite(200, 60).makeGraphic(1, 1, 0xFF1E1E2E);
+		paramPickerPanel.setGraphicSize(480, 360);
+		paramPickerPanel.updateHitbox();
+		paramPickerWidgets.push(paramPickerPanel);
+		tab.add(paramPickerPanel);
+
+		paramPickerTitle = new FlxText(215, 70, 450, 'Bind field to a parameter', 14);
+		paramPickerTitle.setFormat(Paths.font('vcr.ttf'), 14, FlxColor.WHITE, LEFT);
+		paramPickerWidgets.push(paramPickerTitle);
+		tab.add(paramPickerTitle);
+
+		for (i in 0...PARAM_PICKER_VISIBLE)
+		{
+			var idx:Int = i;
+			var row = new PsychUIButton(215, 105 + i * 28, '', function() selectParamForField(idx), 450, 24);
+			paramPickerRows.push(row);
+			paramPickerWidgets.push(row);
+			tab.add(row);
+		}
+
+		setParamPickerVisible(false);
+	}
+
+	function setParamPickerVisible(v:Bool):Void
+	{
+		paramPickerOpen = v;
+		for (w in paramPickerWidgets)
+			show(w, v);
+	}
+
+	function openParamPicker(fieldSlot:Int):Void
+	{
+		if (actionsBusy())
+			return;
+		if (fieldSlot < 0 || aFieldKeys[fieldSlot] == null || curBlock() == null)
+			return;
+
+		if (project.params.length == 0)
+		{
+			setStatus('No parameters yet — add some in the Parameters tab.', true);
+			return;
+		}
+
+		PsychUIInputText.focusOn = null;
+		paramPickerFieldIdx = fieldSlot;
+
+		paramPickerTitle.text = 'Bind "' + aFieldLbls[fieldSlot].text + '" to a parameter  (ESC to close)';
+		for (i in 0...paramPickerRows.length)
+		{
+			var row = paramPickerRows[i];
+			if (i < project.params.length)
+			{
+				var p:ParamDef = project.params[i];
+				row.exists = true;
+				row.label = '$' + EventCodegen.ident(p.name) + '  (' + p.name + ' / ' + p.type + ')';
+			}
+			else
+				row.exists = false;
+		}
+		setActionsChromeVisible(false);
+		setParamPickerVisible(true);
+	}
+
+	function closeParamPicker():Void
+	{
+		if (!paramPickerOpen)
+			return;
+		paramPickerFieldIdx = -1;
+		setParamPickerVisible(false);
+		if (!paletteOpen)
+			setActionsChromeVisible(true);
+	}
+
+	function selectParamForField(paramIndex:Int):Void
+	{
+		if (paramIndex < 0 || paramIndex >= project.params.length)
+			return;
+		if (paramPickerFieldIdx < 0)
+			return;
+
+		var p:ParamDef = project.params[paramIndex];
+		var value:String = '$' + EventCodegen.ident(p.name);
+		var slot:Int = paramPickerFieldIdx;
+		closeParamPicker();
+
+		// Aggiorna widget + progetto
+		var key:String = aFieldKeys[slot];
+		var inst = curBlock();
+		if (inst == null || key == null)
+			return;
+
+		inst.set(key, value);
+		if (aFieldInputs[slot].exists)
+			aFieldInputs[slot].text = value;
+		if (aFieldDDs[slot].exists)
+		{
+			var items:Array<String> = aFieldDDs[slot].list.copy();
+			if (items.indexOf(value) < 0)
+				items.insert(0, value);
+			aFieldDDs[slot].list = items;
+			aFieldDDs[slot].selectedLabel = value;
+		}
+		if (aFieldSwatches[slot].exists)
+			updateBlockSwatch(slot, value);
+		actionChanged();
 	}
 
 	// ================================================================
@@ -1087,8 +1837,11 @@ class EventCreatorState extends MusicBeatState implements PsychUIEventHandler.Ps
 	function loadProject(p:EventProject):Void
 	{
 		PsychUIInputText.focusOn = null;
+		closePalette();
+		closeParamPicker();
 		project = p;
 		selParam = (project.params.length > 0) ? 0 : -1;
+		selBlock = (project.blocks.length > 0) ? 0 : -1;
 
 		nameInput.text = p.name;
 		descInput.text = p.description;
@@ -1097,6 +1850,8 @@ class EventCreatorState extends MusicBeatState implements PsychUIEventHandler.Ps
 
 		refreshParamRows();
 		loadParamIntoPanel();
+		refreshActionRows();
+		loadBlockIntoDetail();
 		refreshSummary();
 		refreshCodePreview();
 		unsavedProgress = true;
@@ -1191,11 +1946,35 @@ class EventCreatorState extends MusicBeatState implements PsychUIEventHandler.Ps
 	{
 		ClientPrefs.toggleVolumeKeys(PsychUIInputText.focusOn == null);
 
-		// ESC per uscire (solo se nessun input e' focalizzato)
-		if (PsychUIInputText.focusOn == null && FlxG.keys.justPressed.ESCAPE)
+		// Chiudi i popup se si cambia tab
+		if (mainBox != null && mainBox.selectedName != 'Actions')
 		{
-			requestExit();
-			return;
+			if (paletteOpen)
+				closePalette();
+			if (paramPickerOpen)
+				closeParamPicker();
+		}
+
+		updatePaletteScroll();
+
+		// ESC: prima chiude i popup Actions, poi esce
+		if (FlxG.keys.justPressed.ESCAPE)
+		{
+			if (paramPickerOpen)
+			{
+				closeParamPicker();
+				return;
+			}
+			if (paletteOpen)
+			{
+				closePalette();
+				return;
+			}
+			if (PsychUIInputText.focusOn == null)
+			{
+				requestExit();
+				return;
+			}
 		}
 
 		// Ctrl+S per salvare
