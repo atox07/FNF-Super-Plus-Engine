@@ -186,7 +186,7 @@ class CustomFadeTransition extends MusicBeatSubstate
 		iconSprite.scale.set(0.5, 0.5);
 		iconSprite.screenCenter();
 
-		waterMark = new FlxText(0, height - 140, 300, 'Super Plus Engine\nv1.1', 32);
+		waterMark = new FlxText(0, height - 140, 300, 'Super Plus Engine\nv1.2', 32);
 		waterMark.x = (width - waterMark.width) / 2;
 		waterMark.setFormat(Paths.font('NotoSans-Medium.ttf'), 32, FlxColor.WHITE, CENTER, FlxTextBorderStyle.OUTLINE, FlxColor.BLACK);
 		waterMark.scrollFactor.set();
