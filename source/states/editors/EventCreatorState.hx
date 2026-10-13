@@ -284,7 +284,7 @@ class EventCreatorState extends MusicBeatState implements PsychUIEventHandler.Ps
 			setStatus('Modified.');
 		}, 200);
 		categoryDD.selectedLabel = project.category;
-		tab.add(categoryDD);
+		// NON aggiungere qui: lo aggiungiamo alla fine, così la lista si disegna sopra tutto
 		objY += 60;
 
 		// Description
@@ -343,6 +343,7 @@ class EventCreatorState extends MusicBeatState implements PsychUIEventHandler.Ps
 		var sampleBtn = new PsychUIButton(objX + 340, objY, 'Load example (Glitch Effect)', loadSample, 220);
 		sampleBtn.onClick = loadSample;
 		tab.add(sampleBtn);
+		tab.add(categoryDD);
 	}
 
 	function makeLabel(text:String, x:Float, y:Float):FlxText
@@ -360,7 +361,7 @@ class EventCreatorState extends MusicBeatState implements PsychUIEventHandler.Ps
 		var tab = mainBox.getTab('Parameters').menu;
 
 		// ---------------- colonna sinistra: lista ----------------
-		tab.add(makeLabel('Parameters:', 15, 20));
+		tab.add(makeLabel('Parameters:', 15, 26));
 		for (i in 0...MAX_PARAMS)
 		{
 			var idx:Int = i;
@@ -393,11 +394,11 @@ class EventCreatorState extends MusicBeatState implements PsychUIEventHandler.Ps
 		tab.add(pHintText);
 
 		// Name
-		var lblName = makeLabel('Name:', PX, 20);
+		var lblName = makeLabel('Name:', PX, 16);
 		detailAll.push(lblName);
 		tab.add(lblName);
 
-		pName = new PsychUIInputText(PX, 38, 300, '', 10);
+		pName = new PsychUIInputText(PX, 36, 300, '', 10);
 		pName.onChange = function(_, cur:String)
 		{
 			var p = curParam();
@@ -415,14 +416,14 @@ class EventCreatorState extends MusicBeatState implements PsychUIEventHandler.Ps
 		tab.add(pVarText);
 
 		// Type (11 bottoni su due righe: niente dropdown, cosi' non coprono altri widget)
-		var lblType = makeLabel('Type:', PX, 70);
+		var lblType = makeLabel('Type:', PX, 66);
 		detailAll.push(lblType);
 		tab.add(lblType);
 		for (i in 0...ParamTypes.ALL.length)
 		{
 			var t:String = ParamTypes.ALL[i];
 			var col:Int = (i < 6) ? i : i - 6;
-			var rowY:Int = (i < 6) ? 88 : 112;
+			var rowY:Int = (i < 6) ? 84 : 108;
 			var b = new PsychUIButton(PX + col * 70, rowY, ParamTypes.LABELS[i], function() setParamType(t), 66, 20);
 			pTypeBtns.push(b);
 			detailAll.push(b);
@@ -523,11 +524,11 @@ class EventCreatorState extends MusicBeatState implements PsychUIEventHandler.Ps
 		tab.add(pPresetNote);
 
 		// ---------------- Default ----------------
-		pDefLbl = makeLabel('Default value:', PX, 235);
+		pDefLbl = makeLabel('Default value:', PX, 232);
 		detailAll.push(pDefLbl);
 		tab.add(pDefLbl);
 
-		pDefText = new PsychUIInputText(PX, 253, 300, '', 10);
+		pDefText = new PsychUIInputText(PX, 252, 300, '', 10);
 		pDefText.onChange = function(_, cur:String)
 		{
 			var p = curParam();
@@ -539,7 +540,7 @@ class EventCreatorState extends MusicBeatState implements PsychUIEventHandler.Ps
 		detailAll.push(pDefText);
 		tab.add(pDefText);
 
-		pDefNum = new PsychUINumericStepper(PX, 253, 1, 0, -99999, 99999, 0, 120);
+		pDefNum = new PsychUINumericStepper(PX, 252, 1, 0, -99999, 99999, 0, 120);
 		pDefNum.onValueChange = function()
 		{
 			var p = curParam();
@@ -551,7 +552,7 @@ class EventCreatorState extends MusicBeatState implements PsychUIEventHandler.Ps
 		detailAll.push(pDefNum);
 		tab.add(pDefNum);
 
-		pDefBool = new PsychUICheckBox(PX, 253, 'Checked by default', 200);
+		pDefBool = new PsychUICheckBox(PX, 252, 'Checked by default', 200);
 		pDefBool.onClick = function()
 		{
 			var p = curParam();
@@ -563,7 +564,7 @@ class EventCreatorState extends MusicBeatState implements PsychUIEventHandler.Ps
 		detailAll.push(pDefBool);
 		tab.add(pDefBool);
 
-		pDefColor = new PsychUIInputText(PX, 253, 110, 'FFFFFF', 10);
+		pDefColor = new PsychUIInputText(PX, 252, 110, 'FFFFFF', 10);
 		pDefColor.onChange = function(_, cur:String)
 		{
 			var p = curParam();
@@ -576,7 +577,7 @@ class EventCreatorState extends MusicBeatState implements PsychUIEventHandler.Ps
 		detailAll.push(pDefColor);
 		tab.add(pDefColor);
 
-		pDefSwatch = new FlxSprite(PX + 125, 253).makeGraphic(20, 20, FlxColor.WHITE);
+		pDefSwatch = new FlxSprite(PX + 125, 252).makeGraphic(20, 20, FlxColor.WHITE);
 		detailAll.push(pDefSwatch);
 		tab.add(pDefSwatch);
 
@@ -588,7 +589,7 @@ class EventCreatorState extends MusicBeatState implements PsychUIEventHandler.Ps
 
 		// Il dropdown per ultimo: la sua lista aperta si disegna sopra tutto il resto,
 		// e sotto di lui (fino a ~170 px) non c'e' nessun widget cliccabile.
-		pDefDD = new PsychUIDropDownMenu(PX, 253, ['-'], function(_:Int, label:String)
+		pDefDD = new PsychUIDropDownMenu(PX, 252, ['-'], function(_:Int, label:String)
 		{
 			var p = curParam();
 			if (p == null || label.startsWith('('))
@@ -1509,8 +1510,8 @@ class EventCreatorState extends MusicBeatState implements PsychUIEventHandler.Ps
 		paletteSearch.text = '';
 		paletteScroll = 0;
 		setActionsChromeVisible(false);
-		refreshPaletteRows('');
-		setPaletteVisible(true);
+		setPaletteVisible(true);       // PRIMA: attiva exists su tutti i widget
+		refreshPaletteRows('');        // POI: aggiorna i label (che ora si scrivono)
 		PsychUIInputText.focusOn = paletteSearch;
 	}
 
@@ -1557,7 +1558,6 @@ class EventCreatorState extends MusicBeatState implements PsychUIEventHandler.Ps
 				var label:String = '[' + b.category + '] ' + b.name + desc;
 				if (label.length > 70)
 					label = label.substr(0, 69) + '~';
-				row.exists = paletteOpen;
 				row.label = label;
 			}
 			else
