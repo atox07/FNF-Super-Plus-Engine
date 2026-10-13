@@ -2,6 +2,7 @@ package states.editors.eventcreator;
 
 import haxe.Json;
 import states.editors.eventcreator.EventDef;
+import states.editors.eventcreator.EventPalette;
 
 using StringTools;
 
@@ -428,6 +429,39 @@ class EventCodegen
 			ctx.warnings.push("\"$" + key + "\" in the template of \"" + def.name + "\" matches no field or parameter.");
 			return 'nil';
 		});
+	}
+
+	/**
+	 * Anteprima Lua di un singolo blocco (per il tab Actions).
+	 * I tag auto-generati compaiono come "ec_preview_N".
+	 */
+	public static function previewBlock(p:EventProject, index:Int):String
+	{
+		if (p == null || index < 0 || index >= p.blocks.length)
+			return '';
+
+		var inst:BlockInstance = p.blocks[index];
+		var def:BlockDef = EventPalette.get(inst.id);
+		if (def == null)
+			return '-- unknown block: ' + inst.id;
+
+		var ctx:GenCtx = new GenCtx(eventId(p.name), 'preview');
+		for (q in p.params)
+		{
+			var pid:String = ident(q.name);
+			ctx.paramIdents.set(pid, pid);
+		}
+
+		if (def.special == 'wait')
+		{
+			var f:BlockFieldDef = findField(def, 'seconds');
+			var secs:String = (f != null) ? fieldLiteral(def, f, inst, ctx) : '0.5';
+			var tag:String = ctx.newTag();
+			return 'runTimer(' + esc(tag) + ', ' + secs + ')\n'
+				+ 'ec_pending[' + esc(tag) + '] = function() ... end';
+		}
+
+		return expand(def, inst, ctx);
 	}
 
 	static function repeatIndent(depth:Int):String
