@@ -2,6 +2,7 @@ package states.editors;
 
 import flixel.FlxCamera;
 import flixel.FlxSprite;
+import flixel.group.FlxSpriteGroup;
 import flixel.text.FlxText;
 import flixel.util.FlxColor;
 import flixel.addons.transition.FlxTransitionableState;
@@ -171,6 +172,9 @@ class EventCreatorState extends MusicBeatState implements PsychUIEventHandler.Ps
 	// Utility
 	var fileDialog:FileDialogHandler;
 
+	/** Posizioni di progetto dei widget, relative all'origine del menu della loro tab (vedi capturePins). */
+	var pinned:Array<{obj:FlxSprite, menu:FlxSpriteGroup, dx:Float, dy:Float}> = [];
+
 	// ================================================================
 	// CREATE / DESTROY
 	// ================================================================
@@ -225,6 +229,9 @@ class EventCreatorState extends MusicBeatState implements PsychUIEventHandler.Ps
 		loadBlockIntoDetail();
 		refreshCodePreview();
 		refreshSummary();
+
+		// Dopo che tutti i widget sono stati aggiunti e prima del primo update.
+		capturePins();
 
 		if (EventPalette.loadError != null)
 			setStatus('Palette problem: ' + EventPalette.loadError, true);
@@ -1985,6 +1992,49 @@ class EventCreatorState extends MusicBeatState implements PsychUIEventHandler.Ps
 		}
 
 		super.update(elapsed);
+
+		// Dopo super.update: PsychUIBox ha gia' spostato i menu, qui si riallinea tutto.
+		applyPins();
+	}
+
+	// ================================================================
+	// LAYOUT PINNING
+	// ================================================================
+	/**
+	 * Fissa ogni widget alla posizione di progetto (le coordinate scritte nei setup*Tab),
+	 * relativa all'origine del menu della tab.
+	 *
+	 * Perche': PsychUIBox sposta il menu (circa +190,+60 rispetto a 0,0), ma lo spostamento di un
+	 * FlxSpriteGroup arriva solo ai membri con exists=true in quel momento. I widget nascosti con
+	 * show(..., false) restano indietro, mentre label e testi si spostano: da qui lo sfasamento
+	 * fisso fra label e campi. Ricalcolando ogni frame il layout non dipende piu' da cosa e'
+	 * visibile quando il menu si muove.
+	 */
+	function capturePins():Void
+	{
+		pinned = [];
+		for (tabName in ['Metadata', 'Parameters', 'Actions', 'Code'])
+		{
+			var menu:FlxSpriteGroup = mainBox.getTab(tabName).menu;
+			for (m in menu.members)
+			{
+				if (m != null)
+					pinned.push({obj: m, menu: menu, dx: m.x - menu.x, dy: m.y - menu.y});
+			}
+		}
+	}
+
+	function applyPins():Void
+	{
+		for (p in pinned)
+		{
+			var tx:Float = p.menu.x + p.dx;
+			var ty:Float = p.menu.y + p.dy;
+			if (p.obj.x != tx)
+				p.obj.x = tx;
+			if (p.obj.y != ty)
+				p.obj.y = ty;
+		}
 	}
 
 	// ================================================================
