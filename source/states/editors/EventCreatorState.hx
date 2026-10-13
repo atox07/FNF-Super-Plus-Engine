@@ -173,7 +173,22 @@ class EventCreatorState extends MusicBeatState implements PsychUIEventHandler.Ps
 	var fileDialog:FileDialogHandler;
 
 	/** Posizioni di progetto dei widget, relative all'origine del menu della loro tab (vedi capturePins). */
-	var pinned:Array<{obj:FlxSprite, menu:FlxSpriteGroup, dx:Float, dy:Float}> = [];
+	var pinned:Array<{obj:FlxSprite, menu:FlxSpriteGroup, dx:Float, dy:Float, hasRef:Bool, rx:Float, ry:Float}> = [];
+
+	/**
+	 * Codice Lua "manuale": se non e' null sostituisce quello generato da Parameters/Actions
+	 * (evento aperto da file, oppure Code tab modificata a mano). null = generazione automatica.
+	 */
+	var codeOverride:String = null;
+
+	/** Contenuto del .txt dell'evento aperto da file: viene riscritto identico al salvataggio. */
+	var rawDescription:String = null;
+
+	/** Il FileDialog va tenuto in un campo (altrimenti il GC lo raccoglie) e i suoi callback possono
+	 *  arrivare fuori dal thread principale: il percorso scelto viene solo messo qui e letto in update(). */
+	var browseDialog:lime.ui.FileDialog;
+	var pendingOpenPath:String = null;
+	var pendingCancel:Bool = false;
 
 	// ================================================================
 	// CREATE / DESTROY
@@ -350,6 +365,10 @@ class EventCreatorState extends MusicBeatState implements PsychUIEventHandler.Ps
 		var sampleBtn = new PsychUIButton(objX + 340, objY, 'Load example (Glitch Effect)', loadSample, 220);
 		sampleBtn.onClick = loadSample;
 		tab.add(sampleBtn);
+
+		var openBtn = new PsychUIButton(objX + 580, objY, 'Open existing...', browseExisting, 160);
+		openBtn.onClick = browseExisting;
+		tab.add(openBtn);
 		tab.add(categoryDD);
 	}
 
@@ -1719,6 +1738,9 @@ class EventCreatorState extends MusicBeatState implements PsychUIEventHandler.Ps
 		codePreview.setFormat(Paths.font('vcr.ttf'), 10, 0xFFE0E0E0, LEFT);
 		codePreview.wordWrap = false;
 		tab.add(codePreview);
+
+		tab.add(new PsychUIButton(10, 455, 'Open existing...', browseExisting, 200));
+		tab.add(new PsychUIButton(220, 455, 'Regenerate (discard manual code)', regenerateFromBlocks, 300));
 	}
 
 	function refreshCodePreview():Void
@@ -1726,17 +1748,28 @@ class EventCreatorState extends MusicBeatState implements PsychUIEventHandler.Ps
 		if (codePreview == null)
 			return;
 
-		var res:GenResult = EventCodegen.generate(project, false);
 		var lines:Array<String> = [];
+		var source:String;
 
-		for (e in res.errors.slice(0, 3))
-			lines.push('-- ERROR: ' + e);
-		for (w in res.warnings.slice(0, 3))
-			lines.push('-- WARNING: ' + w);
-		if (lines.length > 0)
+		if (codeOverride != null)
+		{
+			lines.push('-- MANUAL CODE: Parameters/Actions do not change it. Use "Regenerate" to go back.');
 			lines.push('');
+			source = EventCodegen.stripHeader(codeOverride);
+		}
+		else
+		{
+			var res:GenResult = EventCodegen.generate(project, false);
+			for (e in res.errors.slice(0, 3))
+				lines.push('-- ERROR: ' + e);
+			for (w in res.warnings.slice(0, 3))
+				lines.push('-- WARNING: ' + w);
+			if (lines.length > 0)
+				lines.push('');
+			source = res.code;
+		}
 
-		for (l in res.code.split('\n'))
+		for (l in source.split('\n'))
 			lines.push(l);
 
 		if (lines.length > CODE_PREVIEW_LINES)
@@ -1846,6 +1879,8 @@ class EventCreatorState extends MusicBeatState implements PsychUIEventHandler.Ps
 		PsychUIInputText.focusOn = null;
 		closePalette();
 		closeParamPicker();
+		codeOverride = null;
+		rawDescription = null;
 		project = p;
 		selParam = (project.params.length > 0) ? 0 : -1;
 		selBlock = (project.blocks.length > 0) ? 0 : -1;
@@ -1865,16 +1900,190 @@ class EventCreatorState extends MusicBeatState implements PsychUIEventHandler.Ps
 	}
 
 	// ================================================================
+	// APRI EVENTO ESISTENTE (browse)
+	// ================================================================
+	function browseExisting():Void
+	{
+		if (browseDialog != null)
+			return; // dialog gia' aperto
+
+		if (unsavedProgress)
+		{
+			openSubState(new states.editors.content.Prompt(
+				'You have unsaved changes.\nOpen another event anyway?',
+				openBrowseDialog
+			));
+		}
+		else
+			openBrowseDialog();
+	}
+
+	function openBrowseDialog():Void
+	{
+		PsychUIInputText.focusOn = null;
+
+		var dlg = new lime.ui.FileDialog();
+		dlg.onSelect.add(function(path:String)
+		{
+			pendingOpenPath = path;
+			browseDialog = null;
+		});
+		dlg.onCancel.add(function()
+		{
+			pendingCancel = true;
+			browseDialog = null;
+		});
+		browseDialog = dlg;
+
+		// parte dalla cartella eventi della mod attiva (se esiste)
+		var start:String = haxe.io.Path.normalize(Sys.getCwd() + '/' + getEventsFolder());
+		if (!FileSystem.exists(start))
+			start = Sys.getCwd();
+		dlg.browse(lime.ui.FileDialogType.OPEN, 'lua', start + '/');
+	}
+
+	/**
+	 * Apre un .lua. Se contiene l'header --[==[EC ... EC]==] il progetto viene ricostruito e le tab
+	 * Metadata/Parameters/Actions si riempiono. Se il codice sotto l'header e' diverso da quello che
+	 * l'editor genererebbe (modifiche a mano), il Lua del file resta come codice manuale cosi' non
+	 * si perde nulla. Senza header valido si apre solo come codice manuale (e il .txt resta com'e').
+	 */
+	function loadExistingFile(path:String):Void
+	{
+		try
+		{
+			if (!FileSystem.exists(path) || FileSystem.isDirectory(path))
+			{
+				setStatus('ERROR: file not found: ' + path, true);
+				return;
+			}
+
+			var code:String = File.getContent(path);
+			var txtPath:String = haxe.io.Path.withoutExtension(path) + '.txt';
+			var txt:String = FileSystem.exists(txtPath) ? File.getContent(txtPath) : null;
+
+			var parsed:EventProject = EventCodegen.decodeHeader(code);
+			var p:EventProject;
+			var tab:String;
+			var msg:String;
+
+			if (parsed != null)
+			{
+				p = parsed;
+
+				var cut:String = '';
+				if (p.params.length > MAX_PARAMS)
+				{
+					p.params = p.params.slice(0, MAX_PARAMS);
+					cut += ' Extra parameters dropped (max ' + MAX_PARAMS + ').';
+				}
+				if (p.blocks.length > MAX_BLOCKS)
+				{
+					p.blocks = p.blocks.slice(0, MAX_BLOCKS);
+					cut += ' Extra blocks dropped (max ' + MAX_BLOCKS + ').';
+				}
+
+				loadProject(p);
+
+				var regen:GenResult = EventCodegen.generate(p, true);
+				var same:Bool = (regen.errors.length == 0) && EventCodegen.sameBody(regen.code, code);
+				if (same)
+				{
+					tab = 'Parameters';
+					msg = 'Opened ' + path + ': ' + p.params.length + ' parameter(s), ' + p.blocks.length + ' action(s).';
+				}
+				else
+				{
+					codeOverride = code;
+					tab = 'Code';
+					msg = 'Opened ' + path + '. The Lua differs from what Parameters/Actions generate, so it is kept as manual code (use Regenerate to rebuild it).';
+				}
+				msg += cut;
+			}
+			else
+			{
+				p = new EventProject();
+				p.name = haxe.io.Path.withoutExtension(haxe.io.Path.withoutDirectory(path));
+				if (txt != null)
+					p.description = StringTools.trim(txt.split('\n')[0]);
+
+				loadProject(p);
+				codeOverride = code;
+				rawDescription = txt;
+				tab = 'Code';
+				msg = 'Opened ' + path + ' as manual code (' + EventCodegen.headerError + ')' + ((txt != null) ? ', .txt kept as is.' : '.');
+			}
+
+			refreshCodePreview();
+			mainBox.selectedName = tab;
+			unsavedProgress = false;
+
+			// aprire un file e risalvarci sopra e' il caso normale: niente richiesta di sovrascrittura
+			var folder:String = getEventsFolder();
+			var id:String = EventCodegen.eventId(p.name);
+			if (haxe.io.Path.normalize(path) == haxe.io.Path.normalize(Sys.getCwd() + '/' + folder + id + '.lua'))
+				lastSavedPath = folder + id + '.lua';
+
+			setStatus(msg, parsed == null);
+			trace('[EventCreatorState] Opened existing event: ' + path);
+		}
+		catch (e:Dynamic)
+		{
+			setStatus('ERROR opening file: ' + Std.string(e), true);
+		}
+	}
+
+	/** Torna alla generazione automatica da Parameters/Actions, scartando il codice manuale. */
+	function regenerateFromBlocks():Void
+	{
+		if (codeOverride == null)
+		{
+			setStatus('Already generated from Parameters/Actions.');
+			return;
+		}
+		openSubState(new states.editors.content.Prompt(
+			'Discard the manual code and\nregenerate it from Parameters/Actions?',
+			function()
+			{
+				codeOverride = null;
+				rawDescription = null;
+				unsavedProgress = true;
+				refreshCodePreview();
+				setStatus('Code regenerated from Parameters/Actions.');
+			}
+		));
+	}
+
+	// ================================================================
 	// SALVATAGGIO
 	// ================================================================
 	function doSave():Void
 	{
-		var res:GenResult = EventCodegen.generate(project, true);
-		if (res.errors.length > 0)
+		var code:String;
+		var warnCount:Int = 0;
+
+		if (codeOverride != null)
 		{
-			setStatus('ERROR: ' + res.errors[0], true);
-			FlxG.sound.play(Paths.sound('cancelMenu'), 0.6);
-			return;
+			// codice manuale: non si valida contro Parameters/Actions, serve solo un ID valido
+			if (EventCodegen.eventId(project.name).length < 1)
+			{
+				setStatus('ERROR: the event needs a name (Metadata tab).', true);
+				FlxG.sound.play(Paths.sound('cancelMenu'), 0.6);
+				return;
+			}
+			code = codeOverride;
+		}
+		else
+		{
+			var res:GenResult = EventCodegen.generate(project, true);
+			if (res.errors.length > 0)
+			{
+				setStatus('ERROR: ' + res.errors[0], true);
+				FlxG.sound.play(Paths.sound('cancelMenu'), 0.6);
+				return;
+			}
+			code = res.code;
+			warnCount = res.warnings.length;
 		}
 
 		var id:String = EventCodegen.eventId(project.name);
@@ -1886,15 +2095,15 @@ class EventCreatorState extends MusicBeatState implements PsychUIEventHandler.Ps
 		{
 			openSubState(new states.editors.content.Prompt(
 				'"' + id + '" already exists in custom_events.\nOverwrite it?',
-				function() writeEvent(folder, id, res)
+				function() writeEvent(folder, id, code, warnCount)
 			));
 			return;
 		}
 
-		writeEvent(folder, id, res);
+		writeEvent(folder, id, code, warnCount);
 	}
 
-	function writeEvent(folder:String, id:String, res:GenResult):Void
+	function writeEvent(folder:String, id:String, code:String, warnCount:Int):Void
 	{
 		try
 		{
@@ -1904,14 +2113,14 @@ class EventCreatorState extends MusicBeatState implements PsychUIEventHandler.Ps
 			var luaPath:String = folder + id + '.lua';
 			var txtPath:String = folder + id + '.txt';
 
-			File.saveContent(luaPath, res.code);
-			File.saveContent(txtPath, EventCodegen.generateDescription(project));
+			File.saveContent(luaPath, code);
+			File.saveContent(txtPath, (rawDescription != null) ? rawDescription : EventCodegen.generateDescription(project));
 
 			lastSavedPath = luaPath;
 			unsavedProgress = false;
 
 			var where:String = (Mods.currentModDirectory == null || Mods.currentModDirectory.length < 1) ? ' (global, no active mod)' : '';
-			var warn:String = (res.warnings.length > 0) ? ' - ' + res.warnings.length + ' warning(s), see the Code tab' : '';
+			var warn:String = (warnCount > 0) ? ' - ' + warnCount + ' warning(s), see the Code tab' : '';
 			setStatus('Saved ' + luaPath + ' + .txt' + where + warn, false, 0xFF70D070);
 			FlxG.sound.play(Paths.sound('confirmMenu'), 0.6);
 			trace('[EventCreatorState] Saved: ' + luaPath + ' and ' + txtPath);
@@ -1952,6 +2161,19 @@ class EventCreatorState extends MusicBeatState implements PsychUIEventHandler.Ps
 	override function update(elapsed:Float):Void
 	{
 		ClientPrefs.toggleVolumeKeys(PsychUIInputText.focusOn == null);
+
+		// risultato del dialog 'Open existing' (arriva dal callback, lo si gestisce qui)
+		if (pendingOpenPath != null)
+		{
+			var path:String = pendingOpenPath;
+			pendingOpenPath = null;
+			loadExistingFile(path);
+		}
+		if (pendingCancel)
+		{
+			pendingCancel = false;
+			setStatus('Open cancelled.');
+		}
 
 		// Chiudi i popup se si cambia tab
 		if (mainBox != null && mainBox.selectedName != 'Actions')
@@ -2001,15 +2223,51 @@ class EventCreatorState extends MusicBeatState implements PsychUIEventHandler.Ps
 	// LAYOUT PINNING
 	// ================================================================
 	/**
-	 * Fissa ogni widget alla posizione di progetto (le coordinate scritte nei setup*Tab),
-	 * relativa all'origine del menu della tab.
+	 * Perche' serve: PsychUIBox sposta il menu di ogni tab (circa +190,+60). Un widget composto
+	 * (bottone, input, dropdown...) e' un FlxSpriteGroup annidato, e FlxSpriteGroup.set_x aggiorna
+	 * i figli solo se il gruppo ha exists=true in quel momento. I widget nascosti con
+	 * show(..., false) ricevono quindi la x/y nuova SUL GRUPPO ma i figli (quelli che si vedono)
+	 * restano indietro. Label e swatch sono sprite semplici e si spostano sempre: da qui lo
+	 * sfasamento fisso fra label e campi.
 	 *
-	 * Perche': PsychUIBox sposta il menu (circa +190,+60 rispetto a 0,0), ma lo spostamento di un
-	 * FlxSpriteGroup arriva solo ai membri con exists=true in quel momento. I widget nascosti con
-	 * show(..., false) restano indietro, mentre label e testi si spostano: da qui lo sfasamento
-	 * fisso fra label e campi. Ricalcolando ogni frame il layout non dipende piu' da cosa e'
-	 * visibile quando il menu si muove.
+	 * Per questo non basta confrontare la x del gruppo (e' quella "giusta"): si controlla anche
+	 * la posizione del primo figlio rispetto al gruppo e, se e' scivolata, si riportano a posto
+	 * i figli. Ogni frame, quindi non dipende da cosa e' visibile quando il menu si muove.
 	 */
+	function firstLeaf(s:FlxSprite):FlxSprite
+	{
+		if (!Std.isOfType(s, FlxSpriteGroup))
+			return s;
+		var g:FlxSpriteGroup = cast s;
+		for (m in g.members)
+		{
+			if (m != null)
+			{
+				var l:FlxSprite = firstLeaf(m);
+				if (l != null)
+					return l;
+			}
+		}
+		return null;
+	}
+
+	/** Sposta le foglie di un gruppo senza passare dai setter x/y dei gruppi (che saltano i figli se exists=false). */
+	function shiftLeaves(s:FlxSprite, dx:Float, dy:Float):Void
+	{
+		if (Std.isOfType(s, FlxSpriteGroup))
+		{
+			var g:FlxSpriteGroup = cast s;
+			for (m in g.members)
+				if (m != null)
+					shiftLeaves(m, dx, dy);
+		}
+		else
+		{
+			s.x += dx;
+			s.y += dy;
+		}
+	}
+
 	function capturePins():Void
 	{
 		pinned = [];
@@ -2018,8 +2276,20 @@ class EventCreatorState extends MusicBeatState implements PsychUIEventHandler.Ps
 			var menu:FlxSpriteGroup = mainBox.getTab(tabName).menu;
 			for (m in menu.members)
 			{
-				if (m != null)
-					pinned.push({obj: m, menu: menu, dx: m.x - menu.x, dy: m.y - menu.y});
+				if (m == null)
+					continue;
+
+				var leaf:FlxSprite = firstLeaf(m);
+				var isGroup:Bool = (leaf != null && leaf != m);
+				pinned.push({
+					obj: m,
+					menu: menu,
+					dx: m.x - menu.x,
+					dy: m.y - menu.y,
+					hasRef: isGroup,
+					rx: isGroup ? leaf.x - m.x : 0,
+					ry: isGroup ? leaf.y - m.y : 0
+				});
 			}
 		}
 	}
@@ -2034,6 +2304,19 @@ class EventCreatorState extends MusicBeatState implements PsychUIEventHandler.Ps
 				p.obj.x = tx;
 			if (p.obj.y != ty)
 				p.obj.y = ty;
+
+			if (!p.hasRef)
+				continue;
+
+			var leaf:FlxSprite = firstLeaf(p.obj);
+			if (leaf == null)
+				continue;
+
+			// soglia 20 px: lo scivolamento da correggere e' ~190/60, i micro-aggiustamenti interni dei widget no
+			var fx:Float = (p.obj.x + p.rx) - leaf.x;
+			var fy:Float = (p.obj.y + p.ry) - leaf.y;
+			if (Math.abs(fx) > 20 || Math.abs(fy) > 20)
+				shiftLeaves(p.obj, (Math.abs(fx) > 20) ? fx : 0, (Math.abs(fy) > 20) ? fy : 0);
 		}
 	}
 
