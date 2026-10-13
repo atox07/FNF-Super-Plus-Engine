@@ -1,6 +1,7 @@
 package states.editors.eventcreator;
 
 import haxe.Json;
+import states.editors.eventcreator.EventDef;
 
 using StringTools;
 
