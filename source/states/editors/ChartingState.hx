@@ -466,7 +466,7 @@ class ChartingState extends MusicBeatState implements PsychUIEventHandler.PsychU
 		// Time slider (bottom right, under the Information box)
 		var songLen:Float = (FlxG.sound.music != null && FlxG.sound.music.length > 1) ? FlxG.sound.music.length : 1000;
 		timeSliderMax = songLen;
-		timeSlider = new PsychUISlider(FlxG.width - 365, FlxG.height - 70, onTimeSliderChange, 0, 0, songLen, 320);
+		timeSlider = new PsychUISlider(FlxG.width - 365, FlxG.height - 105, onTimeSliderChange, 0, 0, songLen, 320);
 		timeSlider.label = 'Time';
 		timeSlider.scrollFactor.set();
 		timeSlider.cameras = [camUI];
