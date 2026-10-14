@@ -1,6 +1,8 @@
 package states.editors;
 
 import flixel.FlxSubState;
+import flixel.tweens.FlxEase;
+import flixel.tweens.FlxTween;
 import flixel.util.FlxSave;
 import flixel.util.FlxSort;
 import flixel.util.FlxSpriteUtil;
@@ -1631,6 +1633,7 @@ class ChartingState extends MusicBeatState implements PsychUIEventHandler.PsychU
 									selectedNotes.remove(closest);
 									curRenderedNotes.remove(closest, true);
 									addUndoAction(DELETE_NOTE, !closest.isEvent ? {notes: [closest]} : {events: [closest]});
+									chartPlaceFx('removeNote');
 								}
 								if (selectedNotes.length == 1)
 									onSelectNote();
@@ -1668,6 +1671,7 @@ class ChartingState extends MusicBeatState implements PsychUIEventHandler.PsychU
 
 									selectedNotes.push(noteAdded);
 									addUndoAction(ADD_NOTE, {notes: [noteAdded]});
+									chartPlaceFx('addedNote');
 								}
 								else if (!lockedEvents)
 								{
@@ -1702,6 +1706,7 @@ class ChartingState extends MusicBeatState implements PsychUIEventHandler.PsychU
 
 									selectedNotes.push(eventAdded);
 									addUndoAction(ADD_NOTE, {events: [eventAdded]});
+									chartPlaceFx('addedNote');
 								}
 								onSelectNote();
 								softReloadNotes();
@@ -1880,6 +1885,7 @@ class ChartingState extends MusicBeatState implements PsychUIEventHandler.PsychU
 								selectedNotes.remove(closest);
 								curRenderedNotes.remove(closest, true);
 								addUndoAction(DELETE_NOTE, !closest.isEvent ? {notes: [closest]} : {events: [closest]});
+								chartPlaceFx('removeNote');
 							}
 							if (selectedNotes.length == 1)
 								onSelectNote();
@@ -1917,6 +1923,7 @@ class ChartingState extends MusicBeatState implements PsychUIEventHandler.PsychU
 
 								selectedNotes.push(noteAdded);
 								addUndoAction(ADD_NOTE, {notes: [noteAdded]});
+								chartPlaceFx('addedNote');
 							}
 							else if (!lockedEvents)
 							{
@@ -1951,6 +1958,7 @@ class ChartingState extends MusicBeatState implements PsychUIEventHandler.PsychU
 
 								selectedNotes.push(eventAdded);
 								addUndoAction(ADD_NOTE, {events: [eventAdded]});
+								chartPlaceFx('addedNote');
 							}
 							onSelectNote();
 							softReloadNotes();
@@ -2173,6 +2181,21 @@ class ChartingState extends MusicBeatState implements PsychUIEventHandler.PsychU
 			dataCopy[1] = eventGrp;
 		}
 		return dataCopy;
+	}
+
+	// Sound + little "pop" on the cursor when a note/event is placed or removed (like JS Engine)
+	function chartPlaceFx(soundName:String):Void
+	{
+		var snd = Paths.sound(soundName);
+		if (snd != null)
+			FlxG.sound.play(snd, 0.7);
+
+		if (dummyArrow != null)
+		{
+			FlxTween.cancelTweensOf(dummyArrow.scale);
+			dummyArrow.scale.set(GRID_SIZE * 1.3, GRID_SIZE * 1.3);
+			FlxTween.tween(dummyArrow.scale, {x: GRID_SIZE, y: GRID_SIZE}, 0.12, {ease: FlxEase.quadOut});
+		}
 	}
 
 	function onTimeSliderChange(v:Float):Void
