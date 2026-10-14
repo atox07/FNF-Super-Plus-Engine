@@ -84,6 +84,7 @@ relax — progress doesn’t wait.
 
 ## Developer Credits:
 - **AtoX** - Creator and Main Developer of **Super Plus Engine**
+- **Hogich** - Russian Translation for **Super Plus Engine**
 - **Lenin Asto** - Main Programmer for original [Plus Engine](https://github.com/LeninAsto/FNF-PlusEngine)
 - **sirthegamercoder** - Helper Programmer for Plus Engine
 - **Autistic Lulu** - Creator of [Psych Continued](https://github.com/MeguminBOT/FNF-PsychEngine) and author of several UIs and new features for its fork (thanks for letting us use your fork =D)
@@ -98,7 +99,7 @@ relax — progress doesn’t wait.
 - Moxie - Helper of Psych Engine Mobile.
 
 ## Special Thanks
-- bbpanzu - Ex-Team Member (Programmer).
+- bbpanzu - Ex-Team Member of Plus Engine (Programmer).
 - crowplexus - HScript Iris, Input System v3, and Other PRs.
 - Kamizeta - Creator of Pessy, Psych Engine's mascot.
 - MaxNeton - Loading Screen Easter Egg Artist/Animator.
