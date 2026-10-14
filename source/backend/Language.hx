@@ -2,6 +2,7 @@ package backend;
 
 // Import all languages
 import backend.languages.*;
+import backend.languages.RuRUS;
 
 class Language
 {
@@ -25,7 +26,8 @@ class Language
 		ZhCN, // Chinese (Mainland)
 		ZhHK, // Chinese (Hong Kong)
 		JpJP, // Japanese (Japan)
-		IdID // Indonesian (Bahasa Indonesia)
+		IdID, // Indonesian (Bahasa Indonesia)
+		RuRUS // Русский (RUS)
 	];
 
 	public static function reloadPhrases()
