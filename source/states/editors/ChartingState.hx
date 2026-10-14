@@ -236,6 +236,12 @@ class ChartingState extends MusicBeatState implements PsychUIEventHandler.PsychU
 	var timeLine:FlxSprite;
 	var infoText:FlxText;
 
+	// Song position slider (whole song, 0 -> end)
+	var timeSlider:PsychUISlider;
+	var timeSliderSyncing:Bool = false; // true while WE move the slider (ignore its callback)
+	var timeSliderHold:Bool = false; // true while the user drags the slider
+	var timeSliderMax:Float = -1;
+
 	var autoSaveIcon:FlxSprite;
 	var outputToast:ChartEditorToast;
 
@@ -456,6 +462,15 @@ class ChartingState extends MusicBeatState implements PsychUIEventHandler.PsychU
 		infoText.scrollFactor.set();
 		infoBox.getTab('Information').menu.add(infoText);
 		add(infoBox);
+
+		// Time slider (bottom right, under the Information box)
+		var songLen:Float = (FlxG.sound.music != null && FlxG.sound.music.length > 1) ? FlxG.sound.music.length : 1000;
+		timeSliderMax = songLen;
+		timeSlider = new PsychUISlider(FlxG.width - 365, FlxG.height - 70, onTimeSliderChange, 0, 0, songLen, 320);
+		timeSlider.label = 'Time';
+		timeSlider.scrollFactor.set();
+		timeSlider.cameras = [camUI];
+		add(timeSlider);
 
 		selectedEventBox = new PsychUIBox(12, FlxG.height - 182, 280, 170, ['Events']);
 		selectedEventBox.scrollFactor.set();
@@ -1953,6 +1968,21 @@ class ChartingState extends MusicBeatState implements PsychUIEventHandler.PsychU
 		}
 		ignoreClickForThisFrame = false;
 
+		if (!FlxG.mouse.pressed)
+			timeSliderHold = false;
+
+		if (timeSlider != null && FlxG.sound.music != null && !timeSliderHold && (Conductor.songPosition != lastTime || forceDataUpdate))
+		{
+			timeSliderSyncing = true;
+			if (FlxG.sound.music.length > 1 && timeSliderMax != FlxG.sound.music.length)
+			{
+				timeSliderMax = FlxG.sound.music.length;
+				timeSlider.max = timeSliderMax;
+			}
+			timeSlider.value = FlxG.sound.music.time;
+			timeSliderSyncing = false;
+		}
+
 		if (Conductor.songPosition != lastTime || forceDataUpdate)
 		{
 			var curTime:String = FlxStringUtil.formatTime(Conductor.songPosition / 1000, true);
@@ -2143,6 +2173,25 @@ class ChartingState extends MusicBeatState implements PsychUIEventHandler.PsychU
 			dataCopy[1] = eventGrp;
 		}
 		return dataCopy;
+	}
+
+	function onTimeSliderChange(v:Float):Void
+	{
+		if (timeSliderSyncing || FlxG.sound.music == null)
+			return;
+
+		timeSliderHold = true;
+		if (FlxG.sound.music.playing)
+			setSongPlaying(false);
+
+		var t:Float = FlxMath.bound(v, 0, FlxG.sound.music.length - 1);
+		FlxG.sound.music.time = vocals.time = opponentVocals.time = t;
+		Conductor.songPosition = FlxMath.bound(t + Conductor.offset, 0, FlxG.sound.music.length - 1);
+
+		// jump to the right section even with BPM changes
+		loadSection(sectionIndexForTime(Conductor.songPosition));
+		updateScrollY();
+		forceDataUpdate = true;
 	}
 
 	function updateScrollY()
@@ -6189,7 +6238,7 @@ class ChartingState extends MusicBeatState implements PsychUIEventHandler.PsychU
 
 		openSubState(new EditorPlayState(cast notes, [vocals, opponentVocals]));
 		upperBox.isMinimized = true;
-		upperBox.visible = mainBox.visible = infoBox.visible = false;
+		upperBox.visible = mainBox.visible = infoBox.visible = timeSlider.visible = false;
 	}
 
 	function goToPlayState()
@@ -6217,7 +6266,7 @@ class ChartingState extends MusicBeatState implements PsychUIEventHandler.PsychU
 		ClientPrefs.toggleVolumeKeys(true);
 		super.closeSubState();
 		upperBox.isMinimized = true;
-		upperBox.visible = mainBox.visible = infoBox.visible = true;
+		upperBox.visible = mainBox.visible = infoBox.visible = timeSlider.visible = true;
 		upperBox.bg.visible = false;
 		updateAudioVolume();
 	}
