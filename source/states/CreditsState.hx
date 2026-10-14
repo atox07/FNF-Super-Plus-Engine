@@ -66,6 +66,13 @@ class CreditsState extends MusicBeatState
         'https://www.youtube.com/@truzynx__',
         'FF0000'
     ],
+	[
+        'Hogich',
+        'hogich',
+        'Russian Translation',
+        'https://www.youtube.com/channel/UCDunbEZn3pMg-FTbkXZp8gw',
+        '9D00FF'
+    ],
 			['Plus Engine Team'],
 			[
 				'Lenin Asto',
