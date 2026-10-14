@@ -192,6 +192,9 @@ class Alphabet extends FlxSpriteGroup
 
 	private function createLetters(newText:String)
 	{
+		// Cyrillic fallback: letters missing from the alphabet are shown as Latin (Italian-style) transliteration
+		newText = AlphaCharacter.transliterateMissing(newText);
+
 		var consecutiveSpaces:Int = 0;
 
 		var xPos:Float = 0;
@@ -493,6 +496,47 @@ class AlphaCharacter extends FlxSprite
 			}
 		}
 		updateHitbox();
+	}
+
+	// Italian-style Latin equivalents for the Cyrillic letters а..я (U+0430..U+044F), in order
+	static final cyrillicToLatin:Array<String> = [
+		"a", "b", "v", "g", "d", "e", "zh", "z", "i", "i", "k", "l", "m", "n", "o", "p", "r", "s", "t", "u", "f", "ch", "ts", "ci", "sc", "scc", "", "i", "",
+		"e", "iu", "ia"
+	];
+
+	/**
+	 * Replaces Cyrillic characters that are NOT available in the loaded alphabet with their Latin counterpart.
+	 * If the alphabet ever gets real Cyrillic glyphs (listed in "allowed"), those are used as-is.
+	 */
+	public static function transliterateMissing(text:String):String
+	{
+		if (text == null || allLetters == null)
+			return text;
+
+		var out:StringBuf = new StringBuf();
+		for (i in 0...text.length)
+		{
+			var ch:String = text.charAt(i);
+			var code:Int = StringTools.fastCodeAt(text, i);
+
+			var isCyr:Bool = (code >= 0x0410 && code <= 0x044F) || code == 0x0401 || code == 0x0451;
+			if (!isCyr || allLetters.exists(ch.toLowerCase()))
+			{
+				out.add(ch);
+				continue;
+			}
+
+			var upper:Bool = (code >= 0x0410 && code <= 0x042F) || code == 0x0401;
+			var rep:String;
+			if (code == 0x0401 || code == 0x0451)
+				rep = "io"; // ё / Ё
+			else
+				rep = cyrillicToLatin[(upper ? code + 32 : code) - 0x0430];
+
+			if (rep.length > 0)
+				out.add(upper ? rep.charAt(0).toUpperCase() + rep.substr(1) : rep);
+		}
+		return out.toString();
 	}
 
 	public static function isTypeAlphabet(c:String) // thanks kade
