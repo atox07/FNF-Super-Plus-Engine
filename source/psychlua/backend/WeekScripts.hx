@@ -27,7 +27,7 @@ class WeekScripts
 			return;
 
 		var args:Array<Dynamic> = [isStoryMode];
-		for (mod in modsToRun())
+		for (mod in modsToRun()) // '' = file sfusi direttamente in mods/
 		{
 			var scripts:MenuScripts = null;
 			try
@@ -40,7 +40,7 @@ class WeekScripts
 			catch (e:Dynamic)
 			{
 				// Errore nello script = non nasconde niente, il menu non si rompe
-				trace('[WeekScripts] "$mod": $e');
+				trace('[WeekScripts] "${mod.length > 0 ? mod : "mods/"}": $e');
 			}
 
 			if (scripts != null)
@@ -52,7 +52,9 @@ class WeekScripts
 	#if ((LUA_ALLOWED || HSCRIPT_ALLOWED) && MODS_ALLOWED)
 	static function modsToRun():Array<String>
 	{
-		var list:Array<String> = [];
+		// Mod installata "sfusa": mods/scripts/weeks/init.lua, senza sottocartella col nome della mod.
+		// La cartella mods/ è sempre nel lookup degli asset di Psych, quindi vale in ogni contesto.
+		var list:Array<String> = [''];
 		if (Mods.launchedMod != null && Mods.launchedMod.length > 0)
 		{
 			// Contesto isolato: conta solo la mod lanciata
