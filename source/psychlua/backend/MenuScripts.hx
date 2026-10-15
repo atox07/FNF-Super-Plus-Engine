@@ -28,9 +28,13 @@ class MenuScripts
 
 	var host:FlxState;
 
-	public function new(host:FlxState, folder:String)
+	/** Se impostato, gli script vengono cercati SOLO in questa mod (niente fallback su altre mod o assets). */
+	var modFolder:String = null;
+
+	public function new(host:FlxState, folder:String, ?modFolder:String)
 	{
 		this.host = host;
+		this.modFolder = modFolder;
 		load(folder);
 	}
 
@@ -66,6 +70,12 @@ class MenuScripts
 	function findScript(rel:String):Null<String>
 	{
 		#if (MODS_ALLOWED && sys)
+		if (modFolder != null && modFolder.length > 0)
+		{
+			var own:String = Paths.mods('$modFolder/$rel');
+			return FileSystem.exists(own) ? own : null;
+		}
+
 		var modded:String = Paths.modFolders(rel);
 		if (modded != null && FileSystem.exists(modded))
 			return modded;
