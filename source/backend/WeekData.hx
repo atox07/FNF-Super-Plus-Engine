@@ -3,6 +3,7 @@ package backend;
 import backend.AssetLoader;
 import openfl.utils.AssetType;
 import haxe.Json;
+import psychlua.backend.WeekScripts;
 
 using StringTools;
 
@@ -26,6 +27,13 @@ class WeekData
 {
 	public static var weeksLoaded:Map<String, WeekData> = new Map<String, WeekData>();
 	public static var weeksList:Array<String> = [];
+
+	/** Impostato dagli script (hideBaseWeeks): salta assets/shared e la cartella mod del gioco base */
+	public static var baseWeeksDisabled:Bool = false;
+
+	/** Impostato dagli script (hideWeek): nomi delle week da rimuovere a fine caricamento */
+	public static var hiddenWeeks:Array<String> = [];
+
 	static var weekFileCache:Map<String, WeekFile> = new Map();
 
 	public var folder:String = '';
@@ -82,6 +90,14 @@ class WeekData
 	{
 		weeksList = [];
 		weeksLoaded.clear();
+		baseWeeksDisabled = false;
+		hiddenWeeks = [];
+
+		// Hook per gli script dei modder: scripts/weeks/init.lua (o .hx) -> onLoadWeeks(isStoryMode)
+		#if (LUA_ALLOWED || HSCRIPT_ALLOWED)
+		WeekScripts.run(isStoryMode);
+		#end
+
 		#if MODS_ALLOWED
 		var directories:Array<String> = [Paths.mods(), Paths.getSharedPath()];
 		var originalLength:Int = directories.length;
@@ -103,6 +119,10 @@ class WeekData
 				continue;
 			for (j in 0...directories.length)
 			{
+				#if MODS_ALLOWED
+				if (baseWeeksDisabled && isBaseDirectory(directories[j]))
+					continue;
+				#end
 				var fileToCheck:String = directories[j] + 'weeks/' + sexList[i] + '.json';
 				if (!weeksLoaded.exists(sexList[i]))
 				{
@@ -134,6 +154,8 @@ class WeekData
 		#if MODS_ALLOWED
 		for (i in 0...directories.length)
 		{
+			if (baseWeeksDisabled && isBaseDirectory(directories[i]))
+				continue;
 			var directory:String = directories[i] + 'weeks/';
 			if (Paths.safeModIsDirectory(directory))
 			{
@@ -160,6 +182,13 @@ class WeekData
 			}
 		}
 		#end
+
+		// Week nascoste tramite hideWeek() negli script
+		for (name in hiddenWeeks)
+		{
+			weeksLoaded.remove(name);
+			weeksList.remove(name);
+		}
 	}
 
 	private static function addWeek(weekToCheck:String, path:String, directory:String, i:Int, originalLength:Int)
@@ -222,7 +251,37 @@ class WeekData
 
 		return '';
 	}
+
+	/** True per assets/shared e per la cartella mod del gioco base */
+	static function isBaseDirectory(directory:String):Bool
+	{
+		if (directory == null || directory.length < 1)
+			return false;
+
+		var normalized:String = directory.replace('\\', '/');
+		if (!normalized.endsWith('/'))
+			normalized += '/';
+
+		var shared:String = Paths.getSharedPath().replace('\\', '/');
+		if (!shared.endsWith('/'))
+			shared += '/';
+
+		if (normalized == shared)
+			return true;
+
+		return Mods.isBaseGameMod(getModFolderFromDirectory(directory));
+	}
 	#end
+
+	/** Un weekBefore che non esiste più (base disattivate o week nascosta da script) non deve bloccare la settimana */
+	public static function hasMissingPrerequisite(week:WeekData):Bool
+	{
+		return (baseWeeksDisabled || hiddenWeeks.length > 0)
+			&& week != null
+			&& week.weekBefore != null
+			&& week.weekBefore.length > 0
+			&& !weeksLoaded.exists(week.weekBefore);
+	}
 
 	private static function getWeekFile(path:String):WeekFile
 	{
