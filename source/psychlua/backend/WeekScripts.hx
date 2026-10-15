@@ -1,6 +1,11 @@
 package psychlua.backend;
 
 import backend.WeekData;
+#if (MODS_ALLOWED && sys)
+import sys.FileSystem;
+#end
+
+using StringTools;
 
 /**
  * Esegue gli script dei modder che decidono quali week mostrare.
@@ -53,8 +58,9 @@ class WeekScripts
 	static function modsToRun():Array<String>
 	{
 		// Mod installata "sfusa": mods/scripts/weeks/init.lua, senza sottocartella col nome della mod.
-		// La cartella mods/ è sempre nel lookup degli asset di Psych, quindi vale in ogni contesto.
-		var list:Array<String> = [''];
+		// Conta SOLO se in mods/weeks/ c'è almeno una week aggiuntiva: la sola presenza dello
+		// script (o di una cartella vuota) non deve mai nascondere le week base.
+		var list:Array<String> = hasLooseWeeks() ? [''] : [];
 		if (Mods.launchedMod != null && Mods.launchedMod.length > 0)
 		{
 			// Contesto isolato: conta solo la mod lanciata
@@ -68,6 +74,36 @@ class WeekScripts
 					list.push(mod);
 		}
 		return list;
+	}
+
+	/** True se mods/weeks/ contiene almeno un .json che NON è una week del gioco base. */
+	static function hasLooseWeeks():Bool
+	{
+		#if sys
+		var dir:String = Paths.mods('weeks');
+		if (!FileSystem.exists(dir) || !FileSystem.isDirectory(dir))
+			return false;
+
+		for (file in FileSystem.readDirectory(dir))
+		{
+			if (!file.endsWith('.json'))
+				continue;
+			if (!isBaseWeek(file.substr(0, file.length - 5)))
+				return true;
+		}
+		#end
+		return false;
+	}
+
+	/** Una week "base" esiste in assets/shared o nella cartella mod del gioco base. */
+	static function isBaseWeek(name:String):Bool
+	{
+		#if sys
+		return FileSystem.exists(Paths.getSharedPath('weeks/$name.json'))
+			|| FileSystem.exists(Paths.mods(Mods.BASE_GAME_MOD_FOLDER + '/weeks/$name.json'));
+		#else
+		return false;
+		#end
 	}
 
 	static function hideBase():Void
