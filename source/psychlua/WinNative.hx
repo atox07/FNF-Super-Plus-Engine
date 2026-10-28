@@ -91,7 +91,7 @@ static int WN_create(const char* title, int x, int y, int w, int h)
 		wc.cbSize = sizeof(wc);
 		wc.lpfnWndProc = WN_Proc;
 		wc.hInstance = inst;
-		wc.hCursor = LoadCursorW(NULL, IDC_ARROW);
+		wc.hCursor = LoadCursorW(NULL, MAKEINTRESOURCEW(32512));
 		wc.lpszClassName = WN_CLASS;
 		RegisterClassExW(&wc);
 		g_classRegistered = true;
