@@ -4280,6 +4280,7 @@ public function startPixelDialogue(dialogueFile:PixelDialogueFile, ?onFinish:Voi
 		}
 		luaArray = null;
 		FunkinLua.customFunctions.clear();
+		#if (cpp && windows) psychlua.MultiWindowFunctions.closeAll(); #end
 		#end
 
 		#if HSCRIPT_ALLOWED
