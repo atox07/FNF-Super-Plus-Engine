@@ -2068,6 +2068,7 @@ class FunkinLua
 		LegacyFunctions.implement(this);
 		#if MODCHART_ALLOWED ModchartFunctions.implement(this); #end
 		#if WINDOWS_FUNCTIONS_ALLOWED WindowsFunctions.implement(this); #end
+		#if (cpp && windows) psychlua.MultiWindowFunctions.implement(this); #end
 		MobileFunctions.implement(this);
 		#if android AndroidFunctions.implement(this); #end
 		VideoFunctions.implement(this);
