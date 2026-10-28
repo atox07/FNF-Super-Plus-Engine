@@ -409,28 +409,28 @@ class MultiWindowFunctions
 			return gameToScreenY(y, cam == null || cam == '' ? null : LuaUtils.cameraFromString(cam)));
 
 		// posizione/dimensione a schermo (pixel) di uno sprite del gioco
-		Lua_helper.add_callback(lua, "getObjectScreenX", function(obj:String, ?cam:String = 'game')
+		Lua_helper.add_callback(lua, "getObjectScreenX", function(obj:String, ?cam:String = 'game'):Float
 		{
 			var s = getSprite(obj);
-			return s == null ? 0 : spriteScreenPos(s, LuaUtils.cameraFromString(cam)).x;
+			return s == null ? 0.0 : spriteScreenPos(s, LuaUtils.cameraFromString(cam)).x;
 		});
-		Lua_helper.add_callback(lua, "getObjectScreenY", function(obj:String, ?cam:String = 'game')
+		Lua_helper.add_callback(lua, "getObjectScreenY", function(obj:String, ?cam:String = 'game'):Float
 		{
 			var s = getSprite(obj);
-			return s == null ? 0 : spriteScreenPos(s, LuaUtils.cameraFromString(cam)).y;
+			return s == null ? 0.0 : spriteScreenPos(s, LuaUtils.cameraFromString(cam)).y;
 		});
-		Lua_helper.add_callback(lua, "getObjectScreenWidth", function(obj:String, ?cam:String = 'game')
+		Lua_helper.add_callback(lua, "getObjectScreenWidth", function(obj:String, ?cam:String = 'game'):Float
 		{
 			var s = getSprite(obj);
 			if (s == null)
-				return 0;
+				return 0.0;
 			return s.frameWidth * Math.abs(s.scale.x) * LuaUtils.cameraFromString(cam).zoom * FlxG.scaleMode.scale.x;
 		});
-		Lua_helper.add_callback(lua, "getObjectScreenHeight", function(obj:String, ?cam:String = 'game')
+		Lua_helper.add_callback(lua, "getObjectScreenHeight", function(obj:String, ?cam:String = 'game'):Float
 		{
 			var s = getSprite(obj);
 			if (s == null)
-				return 0;
+				return 0.0;
 			return s.frameHeight * Math.abs(s.scale.y) * LuaUtils.cameraFromString(cam).zoom * FlxG.scaleMode.scale.y;
 		});
 	}
