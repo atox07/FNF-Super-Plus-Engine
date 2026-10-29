@@ -43,6 +43,14 @@ class StageEditorState extends MusicBeatState implements PsychUIEventHandler.Psy
 	var lastLoadedStage:String;
 	var camFollow:FlxObject = new FlxObject(0, 0, 1, 1);
 
+	// smooth zoom state
+	var zoomAnimating:Bool = false;
+	var targetZoom:Float = 1;
+	var zoomAnchorWX:Float = 0;
+	var zoomAnchorWY:Float = 0;
+	var zoomAnchorSX:Float = 0;
+	var zoomAnchorSY:Float = 0;
+
 	var helpBg:FlxSprite;
 	var helpTexts:FlxSpriteGroup;
 	var posTxt:FlxText;
@@ -257,6 +265,22 @@ class StageEditorState extends MusicBeatState implements PsychUIEventHandler.Psy
 		updateSpriteListRadio();
 	}
 
+	function hcSpr(name:String, image:String, x:Float, y:Float, scrollX:Float = 1, scrollY:Float = 1, scale:Float = 1, filters:Dynamic = null):Dynamic
+	{
+		if (filters == null)
+			filters = HIGH_QUALITY;
+		return {type: 'sprite', name: name, image: image, x: x, y: y, scale: [scale, scale], scroll: [scrollX, scrollY], alpha: 1, angle: 0,
+			color: 'FFFFFF', filters: filters, flipX: false, flipY: false, antialiasing: true};
+	}
+
+	function hcAnim(name:String, image:String, x:Float, y:Float, anims:Array<Dynamic>, scrollX:Float = 1, scrollY:Float = 1, scale:Float = 1, filters:Dynamic = null):Dynamic
+	{
+		if (filters == null)
+			filters = HIGH_QUALITY;
+		return {type: 'animatedSprite', name: name, image: image, x: x, y: y, scale: [scale, scale], scroll: [scrollX, scrollY], alpha: 1, angle: 0,
+			color: 'FFFFFF', filters: filters, flipX: false, flipY: false, antialiasing: true, animations: anims, firstAnimation: anims[0].anim};
+	}
+
 	function getHardcodedObjects(stageName:String):Array<Dynamic>
 	{
 		switch (stageName)
@@ -270,41 +294,67 @@ class StageEditorState extends MusicBeatState implements PsychUIEventHandler.Psy
 					{type: 'sprite', name: 'stagecurtains', image: 'stagecurtains', x: -500, y: -300, scale: [0.9, 0.9], scroll: [1.3, 1.3], alpha: 1, angle: 0, color: 'FFFFFF', filters: LOW_QUALITY | HIGH_QUALITY, flipX: false, flipY: false, antialiasing: true}
 				];
 			case 'spooky':
+				// week2: images/halloween_bg(.png/.xml) e halloween_bg_low (versione low quality)
 				return [
-					{type: 'sprite', name: 'spooky_bg', image: 'spooky/back', x: -400, y: -500, scale: [1, 1], scroll: [0.9, 0.9], alpha: 1, angle: 0, color: 'FFFFFF', filters: HIGH_QUALITY, flipX: false, flipY: false, antialiasing: true},
-					{type: 'animatedSprite', name: 'halloweenBG', image: 'spooky/halloween_bg', x: -200, y: -100, scale: [1, 1], scroll: [1, 1], alpha: 1, angle: 0, color: 'FFFFFF', filters: HIGH_QUALITY, flipX: false, flipY: false, antialiasing: true,
-					 animations: [
-						 {anim: 'idle', name: 'halloweem bg0', fps: 24, loop: true, indices: []},
-						 {anim: 'lightning', name: 'halloweem bg lightning strike', fps: 24, loop: false, indices: []}
-					 ], firstAnimation: 'idle'}
+					hcSpr('halloween_bg_low', 'halloween_bg_low', -200, -100, 1, 1, 1, LOW_QUALITY),
+					hcAnim('halloweenBG', 'halloween_bg', -200, -100, [
+						{anim: 'idle', name: 'halloweem bg0', fps: 24, loop: false, indices: []},
+						{anim: 'lightning', name: 'halloweem bg lightning strike', fps: 24, loop: false, indices: []}
+					])
 				];
 			case 'philly':
+				// week3
 				return [
-					{type: 'sprite', name: 'sky', image: 'philly/sky', x: -100, y: -100, scale: [1, 1], scroll: [0.1, 0.1], alpha: 1, angle: 0, color: 'FFFFFF', filters: HIGH_QUALITY, flipX: false, flipY: false, antialiasing: true},
-					{type: 'sprite', name: 'city', image: 'philly/city', x: -10, y: -10, scale: [0.85, 0.85], scroll: [0.3, 0.3], alpha: 1, angle: 0, color: 'FFFFFF', filters: HIGH_QUALITY, flipX: false, flipY: false, antialiasing: true},
-					{type: 'sprite', name: 'lights', image: 'philly/phillycrap', x: -10, y: -10, scale: [0.85, 0.85], scroll: [0.3, 0.3], alpha: 1, angle: 0, color: 'FFFFFF', filters: HIGH_QUALITY, flipX: false, flipY: false, antialiasing: true},
-					{type: 'sprite', name: 'phillyCars', image: 'philly/cars', x: -100, y: 430, scale: [1.1, 1.1], scroll: [0.9, 0.9], alpha: 1, angle: 0, color: 'FFFFFF', filters: HIGH_QUALITY, flipX: false, flipY: false, antialiasing: true},
-					{type: 'sprite', name: 'phillyStreet', image: 'philly/street', x: -100, y: 600, scale: [1.1, 1.1], scroll: [0.9, 0.9], alpha: 1, angle: 0, color: 'FFFFFF', filters: HIGH_QUALITY, flipX: false, flipY: false, antialiasing: true},
-					{type: 'sprite', name: 'phillyWindow', image: 'philly/window', x: 600, y: 300, scale: [0.85, 0.85], scroll: [0.3, 0.3], alpha: 1, angle: 0, color: 'FFFFFF', filters: HIGH_QUALITY, flipX: false, flipY: false, antialiasing: true}
+					hcSpr('sky', 'philly/sky', -100, 0, 0.1, 0.1),
+					hcSpr('city', 'philly/city', -10, 0, 0.3, 0.3, 0.85, LOW_QUALITY | HIGH_QUALITY),
+					hcSpr('window', 'philly/window', -10, 0, 0.3, 0.3, 0.85, LOW_QUALITY | HIGH_QUALITY),
+					hcSpr('behindTrain', 'philly/behindTrain', -40, 50),
+					hcSpr('train', 'philly/train', 2000, 360, 1, 1, 1, LOW_QUALITY | HIGH_QUALITY),
+					hcSpr('street', 'philly/street', -40, 50, 1, 1, 1, LOW_QUALITY | HIGH_QUALITY)
 				];
 			case 'limo':
-				return [
-					{type: 'sprite', name: 'fastCar', image: 'limo/fastCar', x: -800, y: 0, scale: [1, 1], scroll: [0.5, 0.5], alpha: 1, angle: 0, color: 'FFFFFF', filters: HIGH_QUALITY, flipX: false, flipY: false, antialiasing: true},
-					{type: 'sprite', name: 'bgLimo', image: 'limo/bgLimo', x: -200, y: 100, scale: [1, 1], scroll: [1, 1], alpha: 1, angle: 0, color: 'FFFFFF', filters: HIGH_QUALITY, flipX: false, flipY: false, antialiasing: true},
-					{type: 'animatedSprite', name: 'limoDancer', image: 'limo/limoDancer', x: -100, y: 100, scale: [1, 1], scroll: [1, 1], alpha: 1, angle: 0, color: 'FFFFFF', filters: HIGH_QUALITY, flipX: false, flipY: false, antialiasing: true,
-					 animations: [
-						 {anim: 'danceLeft', name: 'bg dancer sketch PINK', fps: 24, loop: false, indices: [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14]},
-						 {anim: 'danceRight', name: 'bg dancer sketch PINK', fps: 24, loop: false, indices: [15,16,17,18,19,20,21,22,23,24,25,26,27,28,29]}
-					 ], firstAnimation: 'danceLeft'},
-					{type: 'sprite', name: 'limoOverlay', image: 'limo/limoOverlay', x: -100, y: 100, scale: [1, 1], scroll: [1, 1], alpha: 1, angle: 0, color: 'FFFFFF', filters: HIGH_QUALITY, flipX: false, flipY: false, antialiasing: true},
-					{type: 'sprite', name: 'limo', image: 'limo/limo', x: -100, y: 100, scale: [1, 1], scroll: [1, 1], alpha: 1, angle: 0, color: 'FFFFFF', filters: HIGH_QUALITY, flipX: false, flipY: false, antialiasing: true}
+				// week4
+				var limoList:Array<Dynamic> = [
+					hcSpr('limoSunset', 'limo/limoSunset', -120, -50, 0.1, 0.1, 1, LOW_QUALITY | HIGH_QUALITY),
+					hcSpr('metalPole', 'gore/metalPole', -500, 220, 0.4, 0.4),
+					hcAnim('bgLimo', 'limo/bgLimo', -150, 480, [
+						{anim: 'drive', name: 'background limo pink', fps: 24, loop: true, indices: []}
+					], 0.4, 0.4)
 				];
-			case 'mall', 'mallEvil':
+				for (i in 0...5)
+					limoList.push(hcAnim('limoDancer$i', 'limo/limoDancer', (370 * i) + 170, 80, [
+						{anim: 'danceLeft', name: 'bg dancer sketch PINK', fps: 24, loop: false, indices: [for (k in 0...15) k]},
+						{anim: 'danceRight', name: 'bg dancer sketch PINK', fps: 24, loop: false, indices: [for (k in 15...30) k]}
+					], 0.4, 0.4));
+				limoList.push(hcSpr('fastCar', 'limo/fastCarLol', -300, 160, 1, 1, 1, LOW_QUALITY | HIGH_QUALITY));
+				limoList.push(hcAnim('limoDrive', 'limo/limoDrive', -120, 550, [
+					{anim: 'drive', name: 'Limo stage', fps: 24, loop: true, indices: []}
+				], 1, 1, 1, LOW_QUALITY | HIGH_QUALITY));
+				return limoList;
+			case 'mall':
+				// week5
 				return [
-					{type: 'sprite', name: 'bg', image: 'mall/bg', x: -1000, y: -100, scale: [1, 1], scroll: [1, 1], alpha: 1, angle: 0, color: 'FFFFFF', filters: HIGH_QUALITY, flipX: false, flipY: false, antialiasing: true},
-					{type: 'sprite', name: 'christmas', image: 'mall/christmas', x: -200, y: -100, scale: [1, 1], scroll: [1, 1], alpha: 1, angle: 0, color: 'FFFFFF', filters: HIGH_QUALITY, flipX: false, flipY: false, antialiasing: true},
-					{type: 'sprite', name: 'bgEscalator', image: 'mall/bgEscalator', x: -1000, y: -100, scale: [1, 1], scroll: [1, 1], alpha: 1, angle: 0, color: 'FFFFFF', filters: HIGH_QUALITY, flipX: false, flipY: false, antialiasing: true},
-					{type: 'sprite', name: 'tree', image: 'mall/tree', x: -200, y: -100, scale: [1, 1], scroll: [1, 1], alpha: 1, angle: 0, color: 'FFFFFF', filters: HIGH_QUALITY, flipX: false, flipY: false, antialiasing: true}
+					hcSpr('bgWalls', 'christmas/bgWalls', -1000, -500, 0.2, 0.2, 0.8, LOW_QUALITY | HIGH_QUALITY),
+					hcAnim('upperBop', 'christmas/upperBop', -240, -90, [
+						{anim: 'idle', name: 'Upper Crowd Bob', fps: 24, loop: false, indices: []}
+					], 0.33, 0.33, 0.85),
+					hcSpr('bgEscalator', 'christmas/bgEscalator', -1100, -600, 0.3, 0.3, 0.9),
+					hcSpr('christmasTree', 'christmas/christmasTree', 370, -250, 0.4, 0.4),
+					hcAnim('bottomBop', 'christmas/bottomBop', -300, 140, [
+						{anim: 'idle', name: 'Bottom Level Boppers Idle', fps: 24, loop: false, indices: []},
+						{anim: 'hey', name: 'Bottom Level Boppers HEY', fps: 24, loop: false, indices: []}
+					], 0.9, 0.9),
+					hcSpr('fgSnow', 'christmas/fgSnow', -600, 700, 1, 1, 1, LOW_QUALITY | HIGH_QUALITY),
+					hcAnim('santa', 'christmas/santa', -840, 150, [
+						{anim: 'idle', name: 'santa idle in fear', fps: 24, loop: false, indices: []}
+					], 1, 1, 1, LOW_QUALITY | HIGH_QUALITY)
+				];
+			case 'mallEvil':
+				// week5 (evil)
+				return [
+					hcSpr('evilBG', 'christmas/evilBG', -400, -500, 0.2, 0.2, 0.8, LOW_QUALITY | HIGH_QUALITY),
+					hcSpr('evilTree', 'christmas/evilTree', 300, -300, 0.2, 0.2, 1, LOW_QUALITY | HIGH_QUALITY),
+					hcSpr('evilSnow', 'christmas/evilSnow', -200, 700, 1, 1, 1, LOW_QUALITY | HIGH_QUALITY)
 				];
 			case 'school', 'schoolEvil':
 				return [
@@ -873,6 +923,7 @@ class StageEditorState extends MusicBeatState implements PsychUIEventHandler.Psy
 		zoomStepper = new PsychUINumericStepper(objX, objY, 0.05, stageJson.defaultZoom, minZoom, maxZoom, 2);
 		zoomStepper.onValueChange = function()
 		{
+			zoomAnimating = false;
 			stageJson.defaultZoom = zoomStepper.value;
 			FlxG.camera.zoom = stageJson.defaultZoom;
 		};
@@ -1444,6 +1495,7 @@ class StageEditorState extends MusicBeatState implements PsychUIEventHandler.Psy
 		FlxG.camera.target = null;
 		var point = focusOnTarget('boyfriend');
 		FlxG.camera.scroll.set(point.x - FlxG.width / 2, point.y - FlxG.height / 2);
+		zoomAnimating = false;
 		FlxG.camera.zoom = stageJson.defaultZoom;
 		oppDropdown.selectedLabel = dad.curCharacter;
 		gfDropdown.selectedLabel = gf.curCharacter;
@@ -1619,30 +1671,45 @@ class StageEditorState extends MusicBeatState implements PsychUIEventHandler.Psy
 		if (FlxG.keys.pressed.I || (touchPad.buttonUp.pressed && touchPad.buttonG.pressed))
 			camY -= camMove;
 
-		// ZOOM CON CTRL + ROTELLA
+		// ZOOM CON CTRL + ROTELLA (fluido, ancorato al cursore)
+		// In HaxeFlixel lo zoom e' centrato sul CENTRO della camera, quindi:
+		// world = scroll + size/2 + (screen - size/2) / zoom
 		if (FlxG.keys.pressed.CONTROL && FlxG.mouse.wheel != 0 && !isMouseOverUI())
 		{
-			var oldZoom:Float = FlxG.camera.zoom;
-			var newZoom:Float = FlxMath.bound(oldZoom * Math.pow(1.15, FlxG.mouse.wheel), minZoom, maxZoom);
-			
-			if (newZoom != oldZoom)
+			var cam:FlxCamera = FlxG.camera;
+			if (!zoomAnimating)
+				targetZoom = cam.zoom;
+			targetZoom = FlxMath.bound(targetZoom * Math.pow(1.15, FlxG.mouse.wheel), minZoom, maxZoom);
+
+			zoomAnchorSX = FlxG.mouse.screenX;
+			zoomAnchorSY = FlxG.mouse.screenY;
+			zoomAnchorWX = cam.scroll.x + cam.width / 2 + (zoomAnchorSX - cam.width / 2) / cam.zoom;
+			zoomAnchorWY = cam.scroll.y + cam.height / 2 + (zoomAnchorSY - cam.height / 2) / cam.zoom;
+			zoomAnimating = true;
+
+			if (cam.target != null)
+				cam.target = null;
+			if (focusRadioGroup.checked > -1)
+				focusRadioGroup.checked = -1;
+		}
+
+		if (FlxG.keys.justPressed.R || FlxG.keys.pressed.E || FlxG.keys.pressed.Q || touchPad.buttonZ.justPressed || touchPad.buttonX.pressed
+			|| touchPad.buttonY.pressed)
+			zoomAnimating = false; // i tasti zoom hanno la priorita' sullo zoom animato
+
+		if (zoomAnimating)
+		{
+			var cam:FlxCamera = FlxG.camera;
+			// interpolazione esponenziale indipendente dal framerate
+			cam.zoom += (targetZoom - cam.zoom) * (1 - Math.exp(-elapsed * 14));
+			if (Math.abs(targetZoom - cam.zoom) < targetZoom * 0.0005)
 			{
-				var worldPoint:FlxPoint = FlxG.mouse.getWorldPosition(FlxG.camera, FlxPoint.get());
-				var screenPoint:FlxPoint = FlxG.mouse.getScreenPosition(FlxG.camera, FlxPoint.get());
-				
-				FlxG.camera.zoom = newZoom;
-				
-				FlxG.camera.scroll.x = worldPoint.x - (screenPoint.x / newZoom);
-				FlxG.camera.scroll.y = worldPoint.y - (screenPoint.y / newZoom);
-				
-				worldPoint.put();
-				screenPoint.put();
-				
-				if (FlxG.camera.target != null)
-					FlxG.camera.target = null;
-				if (focusRadioGroup.checked > -1)
-					focusRadioGroup.checked = -1;
+				cam.zoom = targetZoom;
+				zoomAnimating = false;
 			}
+			// mantiene il punto sotto al cursore fermo mentre lo zoom cambia
+			cam.scroll.x = zoomAnchorWX - cam.width / 2 - (zoomAnchorSX - cam.width / 2) / cam.zoom;
+			cam.scroll.y = zoomAnchorWY - cam.height / 2 - (zoomAnchorSY - cam.height / 2) / cam.zoom;
 		}
 
 		if (camX != 0 || camY != 0)
@@ -1749,8 +1816,8 @@ class StageEditorState extends MusicBeatState implements PsychUIEventHandler.Psy
 
 	function mouseHitsSprite(spr:FlxSprite, worldX:Float, worldY:Float):Bool
 	{
-		var px:Float = worldX + FlxG.camera.scroll.x * (spr.scrollFactor.x - 1);
-		var py:Float = worldY + FlxG.camera.scroll.y * (spr.scrollFactor.y - 1);
+		var px:Float = worldX;
+		var py:Float = worldY;
 		var w:Float = spr.frameWidth * spr.scale.x;
 		var h:Float = spr.frameHeight * spr.scale.y;
 		var left:Float = spr.x - spr.offset.x - spr.origin.x * (spr.scale.x - 1);
@@ -1758,21 +1825,43 @@ class StageEditorState extends MusicBeatState implements PsychUIEventHandler.Psy
 		return px >= left && px <= left + w && py >= top && py <= top + h;
 	}
 
+	// Posizione del mouse nello "spazio" di uno sprite con un certo scrollFactor.
+	// Zoom centrato sul centro camera: x = scroll*sf + size/2 + (screen - size/2) / zoom
+	function mouseToSpriteSpace(spr:FlxSprite, out:FlxPoint):FlxPoint
+	{
+		var cam:FlxCamera = FlxG.camera;
+		out.x = cam.scroll.x * spr.scrollFactor.x + cam.width / 2 + (FlxG.mouse.screenX - cam.width / 2) / cam.zoom;
+		out.y = cam.scroll.y * spr.scrollFactor.y + cam.height / 2 + (FlxG.mouse.screenY - cam.height / 2) / cam.zoom;
+		return out;
+	}
+
+	// Tra tutti gli oggetti sotto il mouse vince quello con l'area PIU' PICCOLA
+	// (cosi' una luce piccola e' cliccabile anche se le curtains grandi la coprono).
+	// A parita' di area vince quello piu' in alto nella lista (disegnato davanti).
 	function getObjectAtMouse():Int
 	{
-		FlxG.mouse.getWorldPosition(FlxG.camera, _mousePoint);
-		var wx:Float = _mousePoint.x;
-		var wy:Float = _mousePoint.y;
+		var best:Int = -1;
+		var bestArea:Float = Math.POSITIVE_INFINITY;
 		var i:Int = stageSprites.length;
 		while (--i >= 0)
 		{
 			var meta:StageEditorMetaSprite = stageSprites[i];
 			if (meta == null || meta.sprite == null || !meta.sprite.visible || meta.sprite.alpha <= 0 || !meta.isShown(curFilters))
 				continue;
-			if (mouseHitsSprite(meta.sprite, wx, wy))
-				return i;
+
+			var spr:FlxSprite = meta.sprite;
+			mouseToSpriteSpace(spr, _mousePoint);
+			if (!mouseHitsSprite(spr, _mousePoint.x, _mousePoint.y))
+				continue;
+
+			var area:Float = Math.abs(spr.frameWidth * spr.scale.x) * Math.abs(spr.frameHeight * spr.scale.y);
+			if (area < bestArea)
+			{
+				bestArea = area;
+				best = i;
+			}
 		}
-		return -1;
+		return best;
 	}
 
 	function selectMeta(index:Int)
@@ -1796,12 +1885,12 @@ class StageEditorState extends MusicBeatState implements PsychUIEventHandler.Psy
 				return;
 			}
 
-			if (FlxG.mouse.deltaScreenX != 0 || FlxG.mouse.deltaScreenY != 0)
-			{
-				dragPosX += FlxG.mouse.deltaScreenX / FlxG.camera.zoom;
-				dragPosY += FlxG.mouse.deltaScreenY / FlxG.camera.zoom;
-				moveObjectTo(dragSprite, Math.round(dragPosX), Math.round(dragPosY));
-			}
+			// Posizione assoluta: il punto afferrato resta sotto il cursore (indipendente da zoom/scrollFactor/camera)
+			mouseToSpriteSpace(dragSprite.sprite, _mousePoint);
+			var newX:Float = Math.round(_mousePoint.x - dragPosX);
+			var newY:Float = Math.round(_mousePoint.y - dragPosY);
+			if (newX != dragSprite.x || newY != dragSprite.y)
+				moveObjectTo(dragSprite, newX, newY);
 			return;
 		}
 
@@ -1812,8 +1901,10 @@ class StageEditorState extends MusicBeatState implements PsychUIEventHandler.Psy
 			{
 				selectMeta(index);
 				dragSprite = stageSprites[index];
-				dragPosX = dragSprite.x;
-				dragPosY = dragSprite.y;
+				// offset tra il punto cliccato e la posizione dello sprite
+				mouseToSpriteSpace(dragSprite.sprite, _mousePoint);
+				dragPosX = _mousePoint.x - dragSprite.x;
+				dragPosY = _mousePoint.y - dragSprite.y;
 			}
 		}
 	}
@@ -1953,17 +2044,40 @@ class StageEditorState extends MusicBeatState implements PsychUIEventHandler.Psy
 		if (_file != null)
 			return;
 
+		var data:String;
+		var fileName:String = lastLoadedStage;
+
 		if (hardcodedPreview)
 		{
-			showOutput('Cannot save: hardcoded preview. Load a JSON stage or export the BG to JSON.', true);
-			return;
+			// Stage hardcoded: non si puo' sovrascrivere, quindi esportiamo uno stage JSON NUOVO
+			// ("<stage>2") con tutti gli sprite (posizioni/scale/ordine attuali) dentro "objects".
+			// Il nuovo stage non dipende piu' dal codice hardcoded.
+			var out:Dynamic = {};
+			for (field in Reflect.fields(stageJson))
+				Reflect.setField(out, field, Reflect.field(stageJson, field));
+
+			var objs:Array<Dynamic> = [];
+			for (basic in stageSprites)
+			{
+				var json:Dynamic = basic.formatToJson();
+				if (json != null)
+					objs.push(json);
+			}
+			out.objects = objs;
+
+			fileName = lastLoadedStage + '2';
+			data = haxe.Json.stringify(out, '\t');
+			showOutput('Hardcoded stage: exporting as NEW stage "$fileName.json". Put it in stages/ and use it as the song stage.');
+		}
+		else
+		{
+			saveObjectsToJson();
+			data = haxe.Json.stringify(stageJson, '\t');
 		}
 
-		saveObjectsToJson();
-		var data = haxe.Json.stringify(stageJson, '\t');
 		#if mobile
 		unsavedProgress = false;
-		StorageUtil.saveContent('$lastLoadedStage.json', data);
+		StorageUtil.saveContent('$fileName.json', data);
 		#else
 		if (data.length > 0)
 		{
@@ -1971,7 +2085,7 @@ class StageEditorState extends MusicBeatState implements PsychUIEventHandler.Psy
 			_file.addEventListener(#if desktop Event.SELECT #else Event.COMPLETE #end, onSaveComplete);
 			_file.addEventListener(Event.CANCEL, onSaveCancel);
 			_file.addEventListener(IOErrorEvent.IO_ERROR, onSaveError);
-			_file.save(data, '$lastLoadedStage.json');
+			_file.save(data, '$fileName.json');
 		}
 		#end
 	}
