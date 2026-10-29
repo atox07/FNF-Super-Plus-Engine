@@ -409,6 +409,19 @@ class StageEditorState extends MusicBeatState implements PsychUIEventHandler.Psy
 		tipText.active = false;
 		add(tipText);
 
+		if (!controls.mobileC)
+		{
+			var controlsTip:FlxText = new FlxText(0, FlxG.height - 19, 700,
+				'Ctrl + Left Click: select / drag  |  Click again: next overlapping  |  Right Click: deselect', 12);
+			controlsTip.alignment = CENTER;
+			controlsTip.alpha = 0.8;
+			controlsTip.cameras = [camHUD];
+			controlsTip.scrollFactor.set();
+			controlsTip.screenCenter(X);
+			controlsTip.active = false;
+			add(controlsTip);
+		}
+
 		var targetTxt:FlxText = new FlxText(30, FlxG.height - 52, 300, 'Camera Target', 16);
 		targetTxt.alignment = CENTER;
 		targetTxt.cameras = [camHUD];
@@ -1751,10 +1764,19 @@ class StageEditorState extends MusicBeatState implements PsychUIEventHandler.Psy
 				moveY += 5 * shiftMult * ctrlMult;
 		}
 
+		if (FlxG.mouse.justPressedRight)
+			rightAccX = rightAccY = 0;
 		if (FlxG.mouse.pressedRight && (FlxG.mouse.deltaScreenX != 0 || FlxG.mouse.deltaScreenY != 0))
 		{
-			moveX += FlxG.mouse.deltaScreenX * ctrlMult;
-			moveY += FlxG.mouse.deltaScreenY * ctrlMult;
+			// pixel schermo -> pixel mondo (divido per lo zoom) e tengo i decimali, cosi' l'oggetto segue il cursore
+			rightAccX += FlxG.mouse.deltaScreenX / FlxG.camera.zoom * ctrlMult;
+			rightAccY += FlxG.mouse.deltaScreenY / FlxG.camera.zoom * ctrlMult;
+			var stepX:Float = rightAccX < 0 ? Math.ceil(rightAccX) : Math.floor(rightAccX);
+			var stepY:Float = rightAccY < 0 ? Math.ceil(rightAccY) : Math.floor(rightAccY);
+			rightAccX -= stepX;
+			rightAccY -= stepY;
+			moveX += stepX;
+			moveY += stepY;
 		}
 
 		if (moveX != 0 || moveY != 0)
@@ -1771,6 +1793,8 @@ class StageEditorState extends MusicBeatState implements PsychUIEventHandler.Psy
 		}
 	}
 
+	var rightAccX:Float = 0;
+	var rightAccY:Float = 0;
 	var dragSprite:StageEditorMetaSprite = null;
 	var dragPosX:Float = 0;
 	var dragPosY:Float = 0;
