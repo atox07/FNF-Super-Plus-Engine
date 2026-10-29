@@ -154,8 +154,9 @@ class StageEditorState extends MusicBeatState implements PsychUIEventHandler.Psy
 			"J/K/L/I - Move Camera",
 			"R - Reset Camera Zoom",
 			"Arrow Keys/Mouse & Right Click - Move Object",
-			"Ctrl + Left Click - Select the object under the cursor",
-			"Ctrl + Left Click & Drag - Move the object with the mouse",
+			"Ctrl + Left Click & Drag - Move the selected object (even if you miss it)",
+			"Ctrl + Left Click on another object - Select it (click again to cycle overlapping ones)",
+			"Right Click (no drag) - Deselect everything",
 			"Ctrl + Scroll Wheel - Zoom In/Out at cursor",
 			"",
 			'$btn - Toggle HUD',
@@ -1814,15 +1815,32 @@ class StageEditorState extends MusicBeatState implements PsychUIEventHandler.Psy
 		return FlxG.mouse.getScreenPosition(camHUD, _mousePoint).y >= FlxG.height - 60;
 	}
 
-	function mouseHitsSprite(spr:FlxSprite, worldX:Float, worldY:Float):Bool
+	// Hit test con: scala negativa, rotazione (angle) e tolleranza (pad, in pixel mondo)
+	function mouseHitsSprite(spr:FlxSprite, worldX:Float, worldY:Float, pad:Float = 0):Bool
 	{
+		var w:Float = Math.abs(spr.frameWidth * spr.scale.x);
+		var h:Float = Math.abs(spr.frameHeight * spr.scale.y);
+		var pivotX:Float = spr.x - spr.offset.x + spr.origin.x;
+		var pivotY:Float = spr.y - spr.offset.y + spr.origin.y;
 		var px:Float = worldX;
 		var py:Float = worldY;
-		var w:Float = spr.frameWidth * spr.scale.x;
-		var h:Float = spr.frameHeight * spr.scale.y;
-		var left:Float = spr.x - spr.offset.x - spr.origin.x * (spr.scale.x - 1);
-		var top:Float = spr.y - spr.offset.y - spr.origin.y * (spr.scale.y - 1);
-		return px >= left && px <= left + w && py >= top && py <= top + h;
+
+		if (spr.angle != 0)
+		{
+			var rad:Float = -spr.angle * Math.PI / 180;
+			var dx:Float = worldX - pivotX;
+			var dy:Float = worldY - pivotY;
+			px = pivotX + dx * Math.cos(rad) - dy * Math.sin(rad);
+			py = pivotY + dx * Math.sin(rad) + dy * Math.cos(rad);
+		}
+
+		var left:Float = pivotX - spr.origin.x * spr.scale.x;
+		var top:Float = pivotY - spr.origin.y * spr.scale.y;
+		if (spr.scale.x < 0)
+			left -= w;
+		if (spr.scale.y < 0)
+			top -= h;
+		return px >= left - pad && px <= left + w + pad && py >= top - pad && py <= top + h + pad;
 	}
 
 	// Posizione del mouse nello "spazio" di uno sprite con un certo scrollFactor.
@@ -1835,33 +1853,48 @@ class StageEditorState extends MusicBeatState implements PsychUIEventHandler.Psy
 		return out;
 	}
 
-	// Tra tutti gli oggetti sotto il mouse vince quello con l'area PIU' PICCOLA
-	// (cosi' una luce piccola e' cliccabile anche se le curtains grandi la coprono).
-	// A parita' di area vince quello piu' in alto nella lista (disegnato davanti).
-	function getObjectAtMouse():Int
+	// Tutti gli oggetti sotto il mouse, ordinati: prima quello selezionato nella lista,
+	// poi per area crescente (i piccoli prima, cosi' una luce sotto le curtains resta prendibile).
+	function getObjectsAtMouse():Array<Int>
 	{
-		var best:Int = -1;
-		var bestArea:Float = Math.POSITIVE_INFINITY;
-		var i:Int = stageSprites.length;
-		while (--i >= 0)
+		var found:Array<{index:Int, area:Float}> = [];
+		var pad:Float = 6 / FlxG.camera.zoom; // tolleranza ~6px a schermo contro i "click error"
+		for (i in 0...stageSprites.length)
 		{
 			var meta:StageEditorMetaSprite = stageSprites[i];
-			if (meta == null || meta.sprite == null || !meta.sprite.visible || meta.sprite.alpha <= 0 || !meta.isShown(curFilters))
+			if (meta == null || meta.sprite == null || !meta.isShown(curFilters))
 				continue;
 
 			var spr:FlxSprite = meta.sprite;
 			mouseToSpriteSpace(spr, _mousePoint);
-			if (!mouseHitsSprite(spr, _mousePoint.x, _mousePoint.y))
+			if (!mouseHitsSprite(spr, _mousePoint.x, _mousePoint.y, pad))
 				continue;
 
-			var area:Float = Math.abs(spr.frameWidth * spr.scale.x) * Math.abs(spr.frameHeight * spr.scale.y);
-			if (area < bestArea)
-			{
-				bestArea = area;
-				best = i;
-			}
+			found.push({index: i, area: Math.abs(spr.frameWidth * spr.scale.x) * Math.abs(spr.frameHeight * spr.scale.y)});
 		}
-		return best;
+
+		var selIndex:Int = getSelectedIndex();
+		found.sort(function(a, b)
+		{
+			if (a.index == selIndex)
+				return -1;
+			if (b.index == selIndex)
+				return 1;
+			if (a.area != b.area)
+				return a.area < b.area ? -1 : 1;
+			return b.index - a.index; // a parita' di area vince quello disegnato davanti
+		});
+		return [for (f in found) f.index];
+	}
+
+	// indice in stageSprites dell'oggetto selezionato nella lista (-1 se nessuno)
+	function getSelectedIndex():Int
+	{
+		var sel:Int = spriteListRadioGroup.checked;
+		if (sel < 0)
+			return -1;
+		var idx:Int = spriteListRadioGroup.labels.length - sel - 1;
+		return (idx >= 0 && idx < stageSprites.length) ? idx : -1;
 	}
 
 	function selectMeta(index:Int)
@@ -1874,8 +1907,40 @@ class StageEditorState extends MusicBeatState implements PsychUIEventHandler.Psy
 		updateSelectedUI();
 	}
 
+	function deselectAll()
+	{
+		spriteListRadioGroup.checked = -1;
+		dragSprite = null;
+		checkUIOnObject();
+		updateSelectedUI();
+	}
+
+	// stato per il click destro (deselect) e per il ciclo tra oggetti sovrapposti
+	var rightDownX:Float = 0;
+	var rightDownY:Float = 0;
+	var rightDownOnUI:Bool = false;
+	var lastPickX:Float = -9999;
+	var lastPickY:Float = -9999;
+	var lastPickTime:Float = 0;
+	var pickCycle:Int = 0;
+	var dragMoved:Bool = false;
+
 	function updateMouseObjectDrag()
 	{
+		// CLICK DESTRO senza trascinare = deseleziona tutto (il drag col destro continua a muovere l'oggetto)
+		if (FlxG.mouse.justPressedRight)
+		{
+			rightDownX = FlxG.mouse.screenX;
+			rightDownY = FlxG.mouse.screenY;
+			rightDownOnUI = isMouseOverUI();
+		}
+		if (FlxG.mouse.justReleasedRight && !rightDownOnUI)
+		{
+			var dist:Float = Math.abs(FlxG.mouse.screenX - rightDownX) + Math.abs(FlxG.mouse.screenY - rightDownY);
+			if (dist < 4 && getSelectedIndex() >= 0)
+				deselectAll();
+		}
+
 		var ctrl:Bool = FlxG.keys.pressed.CONTROL;
 		if (dragSprite != null)
 		{
@@ -1890,17 +1955,45 @@ class StageEditorState extends MusicBeatState implements PsychUIEventHandler.Psy
 			var newX:Float = Math.round(_mousePoint.x - dragPosX);
 			var newY:Float = Math.round(_mousePoint.y - dragPosY);
 			if (newX != dragSprite.x || newY != dragSprite.y)
+			{
 				moveObjectTo(dragSprite, newX, newY);
+				dragMoved = true;
+			}
 			return;
 		}
 
 		if (ctrl && FlxG.mouse.justPressed && !isMouseOverUI())
 		{
-			var index:Int = getObjectAtMouse();
-			if (index >= 0)
+			var candidates:Array<Int> = getObjectsAtMouse();
+			var selIndex:Int = getSelectedIndex();
+			var target:Int = -1;
+
+			if (candidates.length > 0)
 			{
-				selectMeta(index);
-				dragSprite = stageSprites[index];
+				// stesso punto cliccato di nuovo (senza aver trascinato) -> passa al prossimo oggetto sovrapposto
+				var now:Float = haxe.Timer.stamp();
+				var sameSpot:Bool = Math.abs(FlxG.mouse.screenX - lastPickX) + Math.abs(FlxG.mouse.screenY - lastPickY) < 6
+					&& now - lastPickTime < 2 && !dragMoved;
+				pickCycle = sameSpot ? pickCycle + 1 : 0;
+				lastPickX = FlxG.mouse.screenX;
+				lastPickY = FlxG.mouse.screenY;
+				lastPickTime = now;
+				target = candidates[pickCycle % candidates.length];
+			}
+			else if (selIndex >= 0)
+			{
+				// click a vuoto: sposta comunque l'oggetto selezionato dalla lista (movimento relativo)
+				target = selIndex;
+				pickCycle = 0;
+				lastPickX = -9999;
+			}
+
+			if (target >= 0)
+			{
+				if (target != selIndex)
+					selectMeta(target);
+				dragSprite = stageSprites[target];
+				dragMoved = false;
 				// offset tra il punto cliccato e la posizione dello sprite
 				mouseToSpriteSpace(dragSprite.sprite, _mousePoint);
 				dragPosX = _mousePoint.x - dragSprite.x;
