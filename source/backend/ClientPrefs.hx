@@ -91,7 +91,7 @@ import states.TitleState;
 	public var antialiasing:Bool = true;
 	public var lowQuality:Bool = false;
 	public var shaders:Bool = true;
-	public var cacheOnGPU:Bool = #if !switch false #else true #end; // GPU Caching made by Raltyro
+	public var cacheOnGPU:Bool = true; // GPU Caching made by Raltyro // [OPT] default true su tutte le piattaforme
 	public var camZooms:Bool = true;
 	public var hideHud:Bool = false;
 	public var healthBarAlpha:Float = 1;
@@ -408,6 +408,17 @@ class ClientPrefs
 		#if ACHIEVEMENTS_ALLOWED Achievements.load(); #end
 
 		migrateLegacyPrefNames();
+
+		// [OPT] One-shot migration: force cacheOnGPU to true for existing saves that never had it enabled
+		// (deve stare PRIMA del ciclo qui sotto, che copia i valori salvati dentro `data`)
+		if (!Reflect.hasField(FlxG.save.data, 'cacheOnGPUMigrated'))
+		{
+			data.cacheOnGPU = true;
+			Reflect.setField(FlxG.save.data, 'cacheOnGPU', true);
+			Reflect.setField(FlxG.save.data, 'cacheOnGPUMigrated', true);
+			FlxG.save.flush(); // cosi' il flag sopravvive anche se saveSettings() non viene chiamato
+		}
+
 		for (key in Reflect.fields(data))
 			if (key != 'gameplaySettings' && Reflect.hasField(FlxG.save.data, key))
 				Reflect.setField(data, key, Reflect.field(FlxG.save.data, key));
