@@ -2347,8 +2347,14 @@ public function startPixelDialogue(dialogueFile:PixelDialogueFile, ?onFinish:Voi
 				callOnLuas('onSpawnNote', [notes.members.indexOf(dunceNote), dunceNote.noteData, dunceNote.noteType, dunceNote.isSustainNote, dunceNote.strumTime]);
 				callOnHScript('onSpawnNote', [dunceNote]);
 
-				var index:Int = unspawnNotes.indexOf(dunceNote);
-				unspawnNotes.splice(index, 1);
+				// [OPT:002] di norma la nota e' ancora in testa: shift() evita indexOf+splice
+				if (unspawnNotes.length > 0 && unspawnNotes[0] == dunceNote)
+					unspawnNotes.shift();
+				else
+				{
+					var index:Int = unspawnNotes.indexOf(dunceNote);
+					if (index >= 0) unspawnNotes.splice(index, 1);
+				}
 			}
 		}
 
@@ -2370,7 +2376,7 @@ public function startPixelDialogue(dialogueFile:PixelDialogueFile, ?onFinish:Voi
 						while(i < notes.length)
 						{
 							var daNote:Note = notes.members[i];
-							if(daNote == null) continue;
+							if(daNote == null) { i++; continue; } // [OPT:007] evita loop infinito su membro null
 
 							var strumGroup:FlxTypedGroup<StrumNote> = playerStrums;
 							if(!daNote.mustPress) strumGroup = opponentStrums;
@@ -4955,7 +4961,10 @@ public function startPixelDialogue(dialogueFile:PixelDialogueFile, ?onFinish:Voi
 			while (!endingSong && !paused && !shutdownThread)
 			{
 				if (requiresSyncing)
+				{
+					Sys.sleep(0.01); // [OPT:030] niente spin-loop al 100% di un core mentre si aspetta il main thread
 					continue;
+				}
 
 				if (gameFroze)
 				{
