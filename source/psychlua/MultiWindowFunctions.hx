@@ -14,9 +14,12 @@ private class Attached
 	public var offX:Float = 0;
 	public var offY:Float = 0;
 	public var hidden:Bool = false;
+	/** true = forma vecchia: offX/offY = posizione (in pixel finestra) dell'angolo alto-sinistra dello sprite scalato */
+	public var box:Bool = false;
 
-	public function new(spr:FlxSprite, offX:Float, offY:Float, hidden:Bool)
+	public function new(spr:FlxSprite, offX:Float, offY:Float, hidden:Bool, ?box:Bool = false)
 	{
+		this.box = box;
 		this.spr = spr;
 		this.offX = offX;
 		this.offY = offY;
@@ -87,6 +90,14 @@ class MultiWindowFunctions
 		return (o != null && Std.isOfType(o, FlxSprite)) ? cast o : null;
 	}
 
+	static function num(v:Dynamic, def:Float):Float
+	{
+		if (v == null)
+			return def;
+		var f:Float = Std.parseFloat(Std.string(v));
+		return Math.isNaN(f) ? def : f;
+	}
+
 	static function parseColor(v:Dynamic):Int
 	{
 		if (Std.isOfType(v, String))
@@ -144,16 +155,32 @@ class MultiWindowFunctions
 		if (fp == null)
 			return;
 
-		var ox = s.origin.x;
-		var oy = s.origin.y;
 		var m = new Matrix();
-		m.translate(-ox, -oy);
-		m.scale(s.scale.x, s.scale.y);
-		if (s.angle != 0)
-			m.rotate(s.angle * Math.PI / 180);
-		m.translate(ox, oy);
-		m.translate(s.x - s.offset.x + a.offX - win.viewX, s.y - s.offset.y + a.offY - win.viewY);
-		m.scale(win.zoom, win.zoom);
+		if (a.box)
+		{
+			// posiziona il rettangolo scalato con l'angolo alto-sinistra in (offX, offY); rotazione attorno al centro
+			var fw:Float = fp.width;
+			var fh:Float = fp.height;
+			var sw:Float = fw * s.scale.x;
+			var sh:Float = fh * s.scale.y;
+			m.translate(-fw * 0.5, -fh * 0.5);
+			m.scale(s.scale.x, s.scale.y);
+			if (s.angle != 0)
+				m.rotate(s.angle * Math.PI / 180);
+			m.translate(a.offX + sw * 0.5, a.offY + sh * 0.5);
+		}
+		else
+		{
+			var ox = s.origin.x;
+			var oy = s.origin.y;
+			m.translate(-ox, -oy);
+			m.scale(s.scale.x, s.scale.y);
+			if (s.angle != 0)
+				m.rotate(s.angle * Math.PI / 180);
+			m.translate(ox, oy);
+			m.translate(s.x - s.offset.x + a.offX - win.viewX, s.y - s.offset.y + a.offY - win.viewY);
+			m.scale(win.zoom, win.zoom);
+		}
 
 		var ct = new ColorTransform();
 		ct.alphaMultiplier = s.alpha;
@@ -248,7 +275,7 @@ class MultiWindowFunctions
 	{
 		var lua:State = funk.lua;
 
-		Lua_helper.add_callback(lua, "createWindow", function(tag:String, ?title:String = "", ?x:Float = 0, ?y:Float = 0, ?w:Float = 400, ?h:Float = 400):Bool
+		Lua_helper.add_callback(lua, "createWindow", function(tag:String, ?title:String = "", ?x:Float = 0, ?y:Float = 0, ?w:Float = 400, ?h:Float = 400, ?borderless:Bool = true, ?transparent:Bool = true):Bool
 		{
 			if (windows.exists(tag))
 				closeInternal(windows.get(tag), true);
@@ -262,6 +289,8 @@ class MultiWindowFunctions
 				return false;
 			}
 			windows.set(tag, new WinInfo(tag, id, Std.int(x), Std.int(y), iw, ih));
+			WinNative.setBorderless(id, borderless);
+			WinNative.setTransparent(id, transparent);
 			ensureHooks();
 			return true;
 		});
@@ -354,29 +383,40 @@ class MultiWindowFunctions
 			win.zoom = zoom <= 0 ? 1 : zoom;
 		});
 
-		Lua_helper.add_callback(lua, "addSpriteToWindow", function(tag:String, obj:String, ?hideInGame:Bool = true, ?offX:Float = 0, ?offY:Float = 0):Bool
+		// Forma nuova:  addSpriteToWindow(winTag, obj, hideInGame, offX, offY)  -> sprite nel mondo, vista con setWindowView
+		// Forma vecchia: addSpriteToWindow(spriteTag, winTag, offX, offY)        -> sprite messo a (offX, offY) nella finestra
+		Lua_helper.add_callback(lua, "addSpriteToWindow", function(a1:String, a2:String, ?a3:Dynamic = null, ?a4:Dynamic = null, ?a5:Dynamic = null):Bool
 		{
-			var win = getWin(tag);
+			var oldForm = !windows.exists(a1) && windows.exists(a2);
+			var win = getWin(oldForm ? a2 : a1);
 			if (win == null)
 				return false;
-			var spr = getSprite(obj);
+			var objName = oldForm ? a1 : a2;
+			var spr = getSprite(objName);
 			if (spr == null)
 			{
-				err('addSpriteToWindow: "$obj" non e\' uno sprite.');
+				err('addSpriteToWindow: "$objName" non e\' uno sprite.');
 				return false;
 			}
 			for (a in win.sprites)
 				if (a.spr == spr)
 					return true;
-			if (hideInGame)
-				spr.visible = false;
-			win.sprites.push(new Attached(spr, offX, offY, hideInGame));
+			if (oldForm)
+				win.sprites.push(new Attached(spr, num(a3, 0), num(a4, 0), false, true));
+			else
+			{
+				var hide = a3 == null ? true : (a3 == true);
+				if (hide)
+					spr.visible = false;
+				win.sprites.push(new Attached(spr, num(a4, 0), num(a5, 0), hide));
+			}
 			return true;
 		});
-		Lua_helper.add_callback(lua, "removeSpriteFromWindow", function(tag:String, obj:String, ?showInGame:Bool = true)
+		Lua_helper.add_callback(lua, "removeSpriteFromWindow", function(a1:String, a2:String, ?showInGame:Bool = true)
 		{
-			var win = getWin(tag);
-			var spr = getSprite(obj);
+			var oldForm = !windows.exists(a1) && windows.exists(a2);
+			var win = getWin(oldForm ? a2 : a1);
+			var spr = getSprite(oldForm ? a1 : a2);
 			if (win == null || spr == null)
 				return;
 			for (a in win.sprites.copy())
