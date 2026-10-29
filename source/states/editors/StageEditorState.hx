@@ -2406,7 +2406,8 @@ class StageEditorExitPrompt extends MusicBeatSubstate
 		var btnYes:PsychUIButton = new PsychUIButton(FlxG.width / 2 - 110, FlxG.height / 2 + 20, 'Yes', function()
 		{
 			close();
-			FlxTimer.globals.run(0.01, function(_) {
+			// FIX: Sostituito FlxTimer.globals.run con new FlxTimer().start
+			new FlxTimer().start(0.01, function(_) {
 				MusicBeatState.switchState(new states.editors.MasterEditorMenu());
 			});
 		});
