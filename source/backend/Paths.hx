@@ -289,11 +289,14 @@ class Paths
 	{
 		var keysToRemove:Array<String> = [];
 
+		// [OPT:016] lookup O(1) costruito una volta, al posto di Array.contains per ogni chiave
+		var localSet:Map<String, Bool> = [for (k in localTrackedAssets) k => true];
+
 		// clear non local assets in the tracked assets list
 		for (key in currentTrackedAssets.keys())
 		{
 			// if it is not currently contained within the used local assets
-			if (!localTrackedAssets.contains(key) && !isAssetExcluded(key))
+			if (!localSet.exists(key) && !isAssetExcluded(key))
 			{
 				if (destroyGraphic(currentTrackedAssets.get(key)))
 					keysToRemove.push(key); // and remove the key from local cache map
@@ -331,9 +334,10 @@ class Paths
 		var soundsToRemove:Array<String> = [];
 
 		// clear all sounds that are cached
+		var localSet:Map<String, Bool> = [for (k in localTrackedAssets) k => true]; // [OPT:016]
 		for (key => asset in currentTrackedSounds)
 		{
-			if (!localTrackedAssets.contains(key) && !isAssetExcluded(key) && asset != null)
+			if (!localSet.exists(key) && !isAssetExcluded(key) && asset != null)
 			{
 				Assets.cache.clear(key);
 				soundsToRemove.push(key);
