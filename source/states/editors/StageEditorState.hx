@@ -51,7 +51,6 @@ class StageEditorState extends MusicBeatState implements PsychUIEventHandler.Psy
 	var animationEditor:StageEditorAnimationSubstate;
 	var unsavedProgress:Bool = false;
 
-	// Hardcoded stage preview (e.g. "stage" of Week 1): shows the BG from source code, disables save
 	var hardcodedPreview:Bool = false;
 	var originalJsonObjects:Array<Dynamic> = [];
 
@@ -149,6 +148,7 @@ class StageEditorState extends MusicBeatState implements PsychUIEventHandler.Psy
 			"Arrow Keys/Mouse & Right Click - Move Object",
 			"Ctrl + Left Click - Select the object under the cursor",
 			"Ctrl + Left Click & Drag - Move the object with the mouse",
+			"Ctrl + Scroll Wheel - Zoom In/Out at cursor",
 			"",
 			'$btn - Toggle HUD',
 			"F12 - Toggle Selection Rectangle",
@@ -188,6 +188,8 @@ class StageEditorState extends MusicBeatState implements PsychUIEventHandler.Psy
 
 	function updateSpriteList()
 	{
+		loadJsonAssetDirectory(); // Load directory before loading sprites!
+
 		for (spr in stageSprites)
 			if (spr != null && !StageData.reservedNames.contains(spr.type))
 				spr.sprite = FlxDestroyUtil.destroy(spr.sprite);
@@ -196,11 +198,9 @@ class StageEditorState extends MusicBeatState implements PsychUIEventHandler.Psy
 		hardcodedPreview = false;
 		var list:Map<String, FlxSprite> = [];
 
-		// Backup of the original JSON objects (only on first load, to survive hardcoded-preview mode)
 		if (originalJsonObjects.length < 1 && stageJson.objects != null)
 			originalJsonObjects = stageJson.objects.copy();
 
-		// Does the JSON declare any BG object?
 		var hasBgInJson:Bool = false;
 		if (stageJson.objects != null)
 			for (data in stageJson.objects)
@@ -210,7 +210,6 @@ class StageEditorState extends MusicBeatState implements PsychUIEventHandler.Psy
 					break;
 				}
 
-		// 1. Load objects from JSON (if any)
 		if (stageJson.objects != null && stageJson.objects.length > 0)
 		{
 			list = StageData.addObjectsToState(stageJson.objects, gf, dad, boyfriend, null, true);
@@ -218,7 +217,6 @@ class StageEditorState extends MusicBeatState implements PsychUIEventHandler.Psy
 				stageSprites[spr.ID] = new StageEditorMetaSprite(stageJson.objects[spr.ID], spr);
 		}
 
-		// 2. Did any BG actually load?
 		var hasBgLoaded:Bool = false;
 		for (spr in stageSprites)
 			if (spr != null && !StageData.reservedNames.contains(spr.type))
@@ -232,30 +230,26 @@ class StageEditorState extends MusicBeatState implements PsychUIEventHandler.Psy
 
 		if (hasBgInJson && !hasBgLoaded)
 		{
-			// JSON has objects but none could be created (broken images?)
-			showOutput('JSON has objects but none could be loaded. Check the console.', true);
+			showOutput('JSON has objects but none could be loaded. Check console.', true);
 		}
 		else if (!hasBgInJson)
 		{
-			// No BG in JSON -> this is a hardcoded stage: show a preview from source code
 			var hcData = getHardcodedObjects(lastLoadedStage);
 			if (hcData.length > 0)
 			{
 				hardcodedPreview = true;
-				stageSprites = []; // drop nulls left by the JSON attempt
+				stageSprites = []; 
 				var tmp = StageData.addObjectsToState(hcData, null, null, null, null, true);
 				for (key => spr in tmp)
 					stageSprites[spr.ID] = new StageEditorMetaSprite(hcData[spr.ID], spr);
-				showOutput('Hardcoded preview: BG visible but NOT saveable. Edit StageWeek1.hx or export to JSON.');
+				showOutput('Hardcoded preview: BG visible but NOT saveable.');
 			}
 			else
-				showOutput('No BG sprites for "$lastLoadedStage" (hardcoded stage without preview).', true);
+				showOutput('No BG sprites for "$lastLoadedStage". Custom stages need "objects" in their JSON.', true);
 		}
 
-		// 3. Compact array (remove null holes from failed objects)
 		stageSprites = [for (spr in stageSprites) if (spr != null) spr];
 
-		// 4. Add characters if not already present
 		for (character in ['gf', 'dad', 'boyfriend'])
 			if (!list.exists(character))
 				stageSprites.push(new StageEditorMetaSprite({type: character}, Reflect.field(this, character)));
@@ -263,35 +257,66 @@ class StageEditorState extends MusicBeatState implements PsychUIEventHandler.Psy
 		updateSpriteListRadio();
 	}
 
-	/**
-	 * BG definitions for hardcoded stages (source-code stages). Mirrors StageWeek1.hx.
-	 * Update these values if you update Psych Engine and StageWeek1 changes.
-	 */
 	function getHardcodedObjects(stageName:String):Array<Dynamic>
 	{
 		switch (stageName)
 		{
 			case 'stage':
 				return [
-					{type: 'sprite', name: 'stageback',     image: 'stageback',     x: -600, y: -200,
-						scale: [1, 1],       scroll: [0.9, 0.9], alpha: 1, angle: 0, color: 'FFFFFF',
-						filters: LOW_QUALITY | HIGH_QUALITY, flipX: false, flipY: false, antialiasing: true},
-					{type: 'sprite', name: 'stagefront',    image: 'stagefront',    x: -650, y: 600,
-						scale: [1.1, 1.1],   scroll: [0.9, 0.9], alpha: 1, angle: 0, color: 'FFFFFF',
-						filters: LOW_QUALITY | HIGH_QUALITY, flipX: false, flipY: false, antialiasing: true},
-					{type: 'sprite', name: 'stage_light_L', image: 'stage_light',   x: -125, y: -100,
-						scale: [1.1, 1.1],   scroll: [0.9, 0.9], alpha: 1, angle: 0, color: 'FFFFFF',
-						filters: HIGH_QUALITY,               flipX: false, flipY: false, antialiasing: true},
-					{type: 'sprite', name: 'stage_light_R', image: 'stage_light',   x: 1225, y: -100,
-						scale: [1.1, 1.1],   scroll: [0.9, 0.9], alpha: 1, angle: 0, color: 'FFFFFF',
-						filters: HIGH_QUALITY,               flipX: true,  flipY: false, antialiasing: true},
-					{type: 'sprite', name: 'stagecurtains', image: 'stagecurtains', x: -500, y: -300,
-						scale: [0.9, 0.9],   scroll: [1.3, 1.3], alpha: 1, angle: 0, color: 'FFFFFF',
-						filters: LOW_QUALITY | HIGH_QUALITY, flipX: false, flipY: false, antialiasing: true},
+					{type: 'sprite', name: 'stageback',     image: 'stageback',     x: -600, y: -200, scale: [1, 1], scroll: [0.9, 0.9], alpha: 1, angle: 0, color: 'FFFFFF', filters: LOW_QUALITY | HIGH_QUALITY, flipX: false, flipY: false, antialiasing: true},
+					{type: 'sprite', name: 'stagefront',    image: 'stagefront',    x: -650, y: 600,  scale: [1.1, 1.1], scroll: [0.9, 0.9], alpha: 1, angle: 0, color: 'FFFFFF', filters: LOW_QUALITY | HIGH_QUALITY, flipX: false, flipY: false, antialiasing: true},
+					{type: 'sprite', name: 'stage_light_L', image: 'stage_light',   x: -125, y: -100, scale: [1.1, 1.1], scroll: [0.9, 0.9], alpha: 1, angle: 0, color: 'FFFFFF', filters: HIGH_QUALITY, flipX: false, flipY: false, antialiasing: true},
+					{type: 'sprite', name: 'stage_light_R', image: 'stage_light',   x: 1225, y: -100, scale: [1.1, 1.1], scroll: [0.9, 0.9], alpha: 1, angle: 0, color: 'FFFFFF', filters: HIGH_QUALITY, flipX: true,  flipY: false, antialiasing: true},
+					{type: 'sprite', name: 'stagecurtains', image: 'stagecurtains', x: -500, y: -300, scale: [0.9, 0.9], scroll: [1.3, 1.3], alpha: 1, angle: 0, color: 'FFFFFF', filters: LOW_QUALITY | HIGH_QUALITY, flipX: false, flipY: false, antialiasing: true}
 				];
-			// Add other hardcoded stages here if you want previews for them too:
-			// case 'spooky': return [ ... ];
-			// case 'philly': return [ ... ];
+			case 'spooky':
+				return [
+					{type: 'sprite', name: 'spooky_bg', image: 'spooky/back', x: -400, y: -500, scale: [1, 1], scroll: [0.9, 0.9], alpha: 1, angle: 0, color: 'FFFFFF', filters: HIGH_QUALITY, flipX: false, flipY: false, antialiasing: true},
+					{type: 'animatedSprite', name: 'halloweenBG', image: 'spooky/halloween_bg', x: -200, y: -100, scale: [1, 1], scroll: [1, 1], alpha: 1, angle: 0, color: 'FFFFFF', filters: HIGH_QUALITY, flipX: false, flipY: false, antialiasing: true,
+					 animations: [
+						 {anim: 'idle', name: 'halloweem bg0', fps: 24, loop: true, indices: []},
+						 {anim: 'lightning', name: 'halloweem bg lightning strike', fps: 24, loop: false, indices: []}
+					 ], firstAnimation: 'idle'}
+				];
+			case 'philly':
+				return [
+					{type: 'sprite', name: 'sky', image: 'philly/sky', x: -100, y: -100, scale: [1, 1], scroll: [0.1, 0.1], alpha: 1, angle: 0, color: 'FFFFFF', filters: HIGH_QUALITY, flipX: false, flipY: false, antialiasing: true},
+					{type: 'sprite', name: 'city', image: 'philly/city', x: -10, y: -10, scale: [0.85, 0.85], scroll: [0.3, 0.3], alpha: 1, angle: 0, color: 'FFFFFF', filters: HIGH_QUALITY, flipX: false, flipY: false, antialiasing: true},
+					{type: 'sprite', name: 'lights', image: 'philly/phillycrap', x: -10, y: -10, scale: [0.85, 0.85], scroll: [0.3, 0.3], alpha: 1, angle: 0, color: 'FFFFFF', filters: HIGH_QUALITY, flipX: false, flipY: false, antialiasing: true},
+					{type: 'sprite', name: 'phillyCars', image: 'philly/cars', x: -100, y: 430, scale: [1.1, 1.1], scroll: [0.9, 0.9], alpha: 1, angle: 0, color: 'FFFFFF', filters: HIGH_QUALITY, flipX: false, flipY: false, antialiasing: true},
+					{type: 'sprite', name: 'phillyStreet', image: 'philly/street', x: -100, y: 600, scale: [1.1, 1.1], scroll: [0.9, 0.9], alpha: 1, angle: 0, color: 'FFFFFF', filters: HIGH_QUALITY, flipX: false, flipY: false, antialiasing: true},
+					{type: 'sprite', name: 'phillyWindow', image: 'philly/window', x: 600, y: 300, scale: [0.85, 0.85], scroll: [0.3, 0.3], alpha: 1, angle: 0, color: 'FFFFFF', filters: HIGH_QUALITY, flipX: false, flipY: false, antialiasing: true}
+				];
+			case 'limo':
+				return [
+					{type: 'sprite', name: 'fastCar', image: 'limo/fastCar', x: -800, y: 0, scale: [1, 1], scroll: [0.5, 0.5], alpha: 1, angle: 0, color: 'FFFFFF', filters: HIGH_QUALITY, flipX: false, flipY: false, antialiasing: true},
+					{type: 'sprite', name: 'bgLimo', image: 'limo/bgLimo', x: -200, y: 100, scale: [1, 1], scroll: [1, 1], alpha: 1, angle: 0, color: 'FFFFFF', filters: HIGH_QUALITY, flipX: false, flipY: false, antialiasing: true},
+					{type: 'animatedSprite', name: 'limoDancer', image: 'limo/limoDancer', x: -100, y: 100, scale: [1, 1], scroll: [1, 1], alpha: 1, angle: 0, color: 'FFFFFF', filters: HIGH_QUALITY, flipX: false, flipY: false, antialiasing: true,
+					 animations: [
+						 {anim: 'danceLeft', name: 'bg dancer sketch PINK', fps: 24, loop: false, indices: [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14]},
+						 {anim: 'danceRight', name: 'bg dancer sketch PINK', fps: 24, loop: false, indices: [15,16,17,18,19,20,21,22,23,24,25,26,27,28,29]}
+					 ], firstAnimation: 'danceLeft'},
+					{type: 'sprite', name: 'limoOverlay', image: 'limo/limoOverlay', x: -100, y: 100, scale: [1, 1], scroll: [1, 1], alpha: 1, angle: 0, color: 'FFFFFF', filters: HIGH_QUALITY, flipX: false, flipY: false, antialiasing: true},
+					{type: 'sprite', name: 'limo', image: 'limo/limo', x: -100, y: 100, scale: [1, 1], scroll: [1, 1], alpha: 1, angle: 0, color: 'FFFFFF', filters: HIGH_QUALITY, flipX: false, flipY: false, antialiasing: true}
+				];
+			case 'mall', 'mallEvil':
+				return [
+					{type: 'sprite', name: 'bg', image: 'mall/bg', x: -1000, y: -100, scale: [1, 1], scroll: [1, 1], alpha: 1, angle: 0, color: 'FFFFFF', filters: HIGH_QUALITY, flipX: false, flipY: false, antialiasing: true},
+					{type: 'sprite', name: 'christmas', image: 'mall/christmas', x: -200, y: -100, scale: [1, 1], scroll: [1, 1], alpha: 1, angle: 0, color: 'FFFFFF', filters: HIGH_QUALITY, flipX: false, flipY: false, antialiasing: true},
+					{type: 'sprite', name: 'bgEscalator', image: 'mall/bgEscalator', x: -1000, y: -100, scale: [1, 1], scroll: [1, 1], alpha: 1, angle: 0, color: 'FFFFFF', filters: HIGH_QUALITY, flipX: false, flipY: false, antialiasing: true},
+					{type: 'sprite', name: 'tree', image: 'mall/tree', x: -200, y: -100, scale: [1, 1], scroll: [1, 1], alpha: 1, angle: 0, color: 'FFFFFF', filters: HIGH_QUALITY, flipX: false, flipY: false, antialiasing: true}
+				];
+			case 'school', 'schoolEvil':
+				return [
+					{type: 'sprite', name: 'schoolbg', image: 'school/school', x: -600, y: 0, scale: [1, 1], scroll: [1, 1], alpha: 1, angle: 0, color: 'FFFFFF', filters: HIGH_QUALITY, flipX: false, flipY: false, antialiasing: true},
+					{type: 'sprite', name: 'schoolbgEscalator', image: 'school/schoolEscalator', x: -600, y: 0, scale: [1, 1], scroll: [1, 1], alpha: 1, angle: 0, color: 'FFFFFF', filters: HIGH_QUALITY, flipX: false, flipY: false, antialiasing: true},
+					{type: 'sprite', name: 'schoolEvilBG', image: 'school/schoolEvil', x: -600, y: 0, scale: [1, 1], scroll: [1, 1], alpha: 1, angle: 0, color: 'FFFFFF', filters: HIGH_QUALITY, flipX: false, flipY: false, antialiasing: true}
+				];
+			case 'tank':
+				return [
+					{type: 'sprite', name: 'bg', image: 'tank/bg', x: -500, y: -100, scale: [1, 1], scroll: [1, 1], alpha: 1, angle: 0, color: 'FFFFFF', filters: HIGH_QUALITY, flipX: false, flipY: false, antialiasing: true},
+					{type: 'sprite', name: 'tank', image: 'tank/tank', x: -100, y: -100, scale: [1, 1], scroll: [1, 1], alpha: 1, angle: 0, color: 'FFFFFF', filters: HIGH_QUALITY, flipX: false, flipY: false, antialiasing: true}
+				];
 		}
 		return [];
 	}
@@ -1137,7 +1162,7 @@ class StageEditorState extends MusicBeatState implements PsychUIEventHandler.Psy
 				}
 
 		if (characterList.length < 1)
-			characterList.push(''); // Prevents crash
+			characterList.push('');
 
 		var objX = 10;
 		var objY = 20;
@@ -1345,7 +1370,6 @@ class StageEditorState extends MusicBeatState implements PsychUIEventHandler.Psy
 			var point = focusOnTarget(focusRadioGroup.labels[focusRadioGroup.checked]);
 			camFollow.setPosition(point.x, point.y);
 		}
-		loadJsonAssetDirectory();
 	}
 
 	function updateSelectedUI()
@@ -1514,7 +1538,7 @@ class StageEditorState extends MusicBeatState implements PsychUIEventHandler.Psy
 				FlxG.sound.playMusic(Paths.music('freakyMenu'));
 			}
 			else
-				openSubState(new ExitConfirmationPrompt());
+				openSubState(new StageEditorExitPrompt());
 			return;
 		}
 
@@ -1595,6 +1619,32 @@ class StageEditorState extends MusicBeatState implements PsychUIEventHandler.Psy
 		if (FlxG.keys.pressed.I || (touchPad.buttonUp.pressed && touchPad.buttonG.pressed))
 			camY -= camMove;
 
+		// ZOOM CON CTRL + ROTELLA
+		if (FlxG.keys.pressed.CONTROL && FlxG.mouse.wheel != 0 && !isMouseOverUI())
+		{
+			var oldZoom:Float = FlxG.camera.zoom;
+			var newZoom:Float = FlxMath.bound(oldZoom * Math.pow(1.15, FlxG.mouse.wheel), minZoom, maxZoom);
+			
+			if (newZoom != oldZoom)
+			{
+				var worldPoint:FlxPoint = FlxG.mouse.getWorldPosition(FlxG.camera, FlxPoint.get());
+				var screenPoint:FlxPoint = FlxG.mouse.getScreenPosition(FlxG.camera, FlxPoint.get());
+				
+				FlxG.camera.zoom = newZoom;
+				
+				FlxG.camera.scroll.x = worldPoint.x - (screenPoint.x / newZoom);
+				FlxG.camera.scroll.y = worldPoint.y - (screenPoint.y / newZoom);
+				
+				worldPoint.put();
+				screenPoint.put();
+				
+				if (FlxG.camera.target != null)
+					FlxG.camera.target = null;
+				if (focusRadioGroup.checked > -1)
+					focusRadioGroup.checked = -1;
+			}
+		}
+
 		if (camX != 0 || camY != 0)
 		{
 			FlxG.camera.scroll.x += camX;
@@ -1612,7 +1662,6 @@ class StageEditorState extends MusicBeatState implements PsychUIEventHandler.Psy
 		else if (FlxG.keys.pressed.Q || touchPad.buttonY.pressed && FlxG.camera.zoom > minZoom)
 			FlxG.camera.zoom = Math.max(minZoom, FlxG.camera.zoom - elapsed * FlxG.camera.zoom * shiftMult * ctrlMult);
 
-		// SPRITE X/Y
 		var shiftMult:Float = 1;
 		var ctrlMult:Float = 1;
 		if (FlxG.keys.pressed.SHIFT || touchPad.buttonC.pressed)
@@ -1654,7 +1703,6 @@ class StageEditorState extends MusicBeatState implements PsychUIEventHandler.Psy
 		}
 	}
 
-	// ---- Ctrl + mouse object picking / dragging ----
 	var dragSprite:StageEditorMetaSprite = null;
 	var dragPosX:Float = 0;
 	var dragPosY:Float = 0;
@@ -1867,14 +1915,14 @@ class StageEditorState extends MusicBeatState implements PsychUIEventHandler.Psy
 			sel.y = sprY;
 			switch (num)
 			{
-				case 0: // Top
+				case 0:
 					sel.setGraphicSize(sprWidth, lineSize);
-				case 1: // Bottom
+				case 1:
 					sel.setGraphicSize(sprWidth, lineSize);
 					sel.y += sprHeight - lineSize;
-				case 2: // Left
+				case 2:
 					sel.setGraphicSize(lineSize, sprHeight);
-				case 3: // Right
+				case 3:
 					sel.setGraphicSize(lineSize, sprHeight);
 					sel.x += sprWidth - lineSize;
 			}
@@ -1884,13 +1932,10 @@ class StageEditorState extends MusicBeatState implements PsychUIEventHandler.Psy
 		selectionSprites.draw();
 	}
 
-	// save
-
 	function saveObjectsToJson()
 	{
 		if (hardcodedPreview)
 		{
-			// Do NOT overwrite the JSON with injected hardcoded BG: restore original objects
 			stageJson.objects = originalJsonObjects.copy();
 			return;
 		}
@@ -2178,14 +2223,10 @@ class StageEditorMetaSprite
 	public var sprite:FlxSprite;
 	public var visible(get, set):Bool;
 
-	function get_visible()
-		return sprite.visible;
-
-	function set_visible(v:Bool)
-		return (sprite.visible = v);
+	function get_visible() return sprite.visible;
+	function set_visible(v:Bool) return (sprite.visible = v);
 
 	public var type:String;
-
 	public var name:String;
 	public var filters:LoadFilters = (LOW_QUALITY) | (HIGH_QUALITY);
 	public var x(get, set):Float;
@@ -2224,13 +2265,12 @@ class StageEditorMetaSprite
 					sprite.frames = Paths.getAtlas(v);
 			}
 		}
-		catch (e:Dynamic)
-		{
-		}
+		catch (e:Dynamic) {}
+
 		if ((type == 'sprite' || type == 'animatedSprite') && (sprite.graphic == null || sprite.frames == null))
 		{
 			trace('Could not load image "$v" for sprite "$name"');
-			sprite.makeGraphic(200, 200, FlxColor.MAGENTA); // visible placeholder instead of an invisible sprite
+			sprite.makeGraphic(200, 200, FlxColor.MAGENTA);
 		}
 		sprite.updateHitbox();
 		return (image = v);
@@ -2347,6 +2387,43 @@ class StageEditorMetaSprite
 	}
 }
 
+class StageEditorExitPrompt extends MusicBeatSubstate
+{
+	public function new()
+	{
+		super();
+		var bg:FlxSprite = new FlxSprite().makeGraphic(1, 1, FlxColor.BLACK);
+		bg.scale.set(FlxG.width, FlxG.height);
+		bg.updateHitbox();
+		bg.alpha = 0.6;
+		add(bg);
+
+		var txt:FlxText = new FlxText(0, FlxG.height / 2 - 60, FlxG.width, "Unsaved progress!\nAre you sure you want to exit?", 24);
+		txt.setFormat(null, 24, FlxColor.WHITE, CENTER, OUTLINE_FAST, FlxColor.BLACK);
+		txt.borderSize = 1;
+		add(txt);
+
+		var btnYes:PsychUIButton = new PsychUIButton(FlxG.width / 2 - 110, FlxG.height / 2 + 20, 'Yes', function()
+		{
+			close();
+			FlxTimer.globals.run(0.01, function(_) {
+				MusicBeatState.switchState(new states.editors.MasterEditorMenu());
+			});
+		});
+		btnYes.normalStyle.bgColor = FlxColor.RED;
+		btnYes.normalStyle.textColor = FlxColor.WHITE;
+		btnYes.cameras = [cast(FlxG.state, StageEditorState).camHUD];
+		add(btnYes);
+
+		var btnNo:PsychUIButton = new PsychUIButton(FlxG.width / 2 + 10, FlxG.height / 2 + 20, 'No', function()
+		{
+			close();
+		});
+		btnNo.cameras = [cast(FlxG.state, StageEditorState).camHUD];
+		add(btnNo);
+	}
+}
+
 class StageEditorAnimationSubstate extends MusicBeatSubstate
 {
 	var bg:FlxSprite;
@@ -2397,7 +2474,6 @@ class StageEditorAnimationSubstate extends MusicBeatSubstate
 			target.sprite.screenCenter();
 			add(target.sprite);
 			reloadAnimList();
-			trace('Opened substate');
 		};
 
 		closeCallback = function()
@@ -2530,7 +2606,6 @@ class StageEditorAnimationSubstate extends MusicBeatSubstate
 
 			curAnim = target.animations.length - 1;
 			updateTextColors();
-			trace('Added/Updated animation: ' + animationInputText.text);
 		});
 
 		var removeButton:PsychUIButton = new PsychUIButton(160, animationIndicesInputText.y + 35, 'Remove', function()
@@ -2559,7 +2634,6 @@ class StageEditorAnimationSubstate extends MusicBeatSubstate
 					else if (target.animations.length < 1)
 						target.sprite.animation.curAnim = null;
 
-					trace('Removed animation: ' + animationInputText.text);
 					reloadAnimList();
 					break;
 				}
@@ -2670,7 +2744,7 @@ class StageEditorAnimationSubstate extends MusicBeatSubstate
 			return;
 
 		if (target.animations.length > 1)
-			{
+		{
 			var changedAnim:Bool = false;
 			if (FlxG.keys.justPressed.W || touchPad.buttonUp.justPressed && (changedAnim = true))
 				curAnim--;
