@@ -307,6 +307,9 @@ class Paths
 			currentTrackedAssets.remove(key);
 
 		System.gc();
+		#if cpp
+		cpp.vm.Gc.compact(); // [OPT:015] restituisce al sistema la memoria liberata dopo il gc
+		#end
 	}
 
 	// define the locally tracked assets
