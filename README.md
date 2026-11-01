@@ -134,6 +134,8 @@ You need to have:
 - **Shader Compatibility Layer:** Automatic adaptation of legacy (0.6.3)
 - **Event Creator:** Full in-game visual editor for custom Lua events. 
 - **Menu Scripting:** MainMenuState can now load Lua/HScript from scripts/menus/MainMenuState/init.lua (or .hx)
+- **Stage Editor Remake:** Stage editor got fixed and now it works, you can also drag and drop the parts of the stage in it.
+- **Outside of the Window:** You can now do cool events or scripts to work out of the window or generate other windows: Like in the Unrensposive fanmade mod.
 
 # Features inherited from Plus Engine (after 1.0.4)
 
