@@ -1304,6 +1304,17 @@ class FreeplayState extends MusicBeatState
 			searchField.focus();
 		}
 
+		// Toggle verso il Freeplay in stile V-Slice (script HScript)
+		if (!searchFocused && !player.playingMusic && !inDifficultySelect && FlxG.keys.justPressed.V)
+		{
+			persistentUpdate = false;
+			stopInstPreview(false);
+			destroyFreeplayVocals();
+			FlxG.sound.play(Paths.sound('scrollMenu'));
+			MusicBeatState.switchState(backend.ScriptableState.tryCreate('VSliceFreeplayState', new VSliceFreeplayState()));
+			return;
+		}
+
 		if (!searchFocused && (controls.BACK || touchPad.buttonB.justPressed #if android || FlxG.android.justReleased.BACK #end))
 		{
 			if (player.playingMusic)
