@@ -707,7 +707,7 @@ class StageEditorState extends MusicBeatState implements PsychUIEventHandler.Psy
 	}
 
 	// ---------------------------------------------------------------
-	// PNG picker: legge mods/images (e sottocartelle), solo PNG o PNG + XML
+	// PNG picker: reads mods/images (and subfolders), only PNG or PNG + XML
 	// ---------------------------------------------------------------
 	static inline var PNG_DIR:String = 'mods/images/';
 	static inline var PNG_PICKER_W:Int = 560;
@@ -784,7 +784,7 @@ class StageEditorState extends MusicBeatState implements PsychUIEventHandler.Psy
 		if (pngPickerGroup == null)
 			buildPngPicker();
 
-		pngInfoText.text = (pngEntries.length > 0) ? '${pngEntries.length} PNG in $PNG_DIR' : 'Nessun PNG trovato in $PNG_DIR';
+		pngInfoText.text = (pngEntries.length > 0) ? '${pngEntries.length} PNG in $PNG_DIR' : 'No PNGs found in $PNG_DIR';
 		refreshPngRows();
 		pngPickerGroup.visible = pngPickerGroup.active = pngPickerOpen = true;
 	}
@@ -827,7 +827,7 @@ class StageEditorState extends MusicBeatState implements PsychUIEventHandler.Psy
 		}
 
 		pngPickerGroup.add(makePngText(pngPanelX + 16, pngPanelY + 70 + PNG_ROWS * PNG_ROW_H + 10, PNG_PICKER_W - 32,
-			'Click = importa  |  Rotella / PagSu / PagGiu = scorri  |  ESC / click destro = chiudi', 12, 0xFFE0E0E0));
+			'Click = import  |  Wheel / PageUp / PageDown = scroll  |  ESC / right click = close', 12, 0xFFE0E0E0));
 
 		add(pngPickerGroup);
 		pngPickerGroup.visible = pngPickerGroup.active = false;
@@ -853,7 +853,7 @@ class StageEditorState extends MusicBeatState implements PsychUIEventHandler.Psy
 		}
 	}
 
-	// Gestisce l'input del picker (modale). Ritorna true se il picker e' aperto.
+	// Handles picker input (modal). Returns true if the picker is open.
 	function updatePngPicker():Bool
 	{
 		if (!pngPickerOpen)
@@ -990,7 +990,7 @@ class StageEditorState extends MusicBeatState implements PsychUIEventHandler.Psy
 		posTxt.text = 'X: ${selected.sprite.x}\nY: ${selected.sprite.y}';
 		updateSelectedUI();
 
-		showOutput('Importato "${entry.name}"' + (type == 'animatedSprite' ? ' (${anims.length} animazioni da XML)' : ''));
+		showOutput('Importato "${entry.name}"' + (type == 'animatedSprite' ? ' (${anims.length} animations from XML)' : ''));
 	}
 
 	function spriteCreatePopup()
