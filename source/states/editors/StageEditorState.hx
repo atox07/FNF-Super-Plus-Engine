@@ -111,6 +111,7 @@ class StageEditorState extends MusicBeatState implements PsychUIEventHandler.Psy
 		updateSpriteList();
 
 		addHelpScreen();
+		buildPngPicker();
 		FlxG.mouse.visible = true;
 		animationEditor = new StageEditorAnimationSubstate();
 
@@ -643,6 +644,12 @@ class StageEditorState extends MusicBeatState implements PsychUIEventHandler.Psy
 		buttonDelete.normalStyle.bgColor = FlxColor.RED;
 		buttonDelete.normalStyle.textColor = FlxColor.WHITE;
 		tab_group.add(buttonDelete);
+
+		var buttonImportPng:PsychUIButton = new PsychUIButton(buttonX, buttonY + 150, 'Import PNG', openPngPicker);
+		buttonImportPng.cameras = [camHUD];
+		buttonImportPng.normalStyle.bgColor = FlxColor.ORANGE;
+		buttonImportPng.normalStyle.textColor = FlxColor.WHITE;
+		tab_group.add(buttonImportPng);
 	}
 
 	function showOutput(txt:String, isError:Bool = false)
@@ -697,6 +704,293 @@ class StageEditorState extends MusicBeatState implements PsychUIEventHandler.Psy
 		spriteListRadioGroup.checked = spriteListRadioGroup.labels.length - num - 1;
 		updateSelectedUI();
 		unsavedProgress = true;
+	}
+
+	// ---------------------------------------------------------------
+	// PNG picker: legge mods/images (e sottocartelle), solo PNG o PNG + XML
+	// ---------------------------------------------------------------
+	static inline var PNG_DIR:String = 'mods/images/';
+	static inline var PNG_PICKER_W:Int = 560;
+	static inline var PNG_ROWS:Int = 16;
+	static inline var PNG_ROW_H:Int = 20;
+
+	var pngPickerGroup:FlxSpriteGroup;
+	var pngPickerOpen:Bool = false;
+	var pngEntries:Array<PngEntry> = [];
+	var pngScroll:Int = 0;
+	var pngRows:Array<FlxText> = [];
+	var pngHoverRect:FlxSprite;
+	var pngInfoText:FlxText;
+	var pngPanelX:Float = 0;
+	var pngPanelY:Float = 0;
+	var pngPanelH:Float = 0;
+
+	function makePngRect(x:Float, y:Float, w:Float, h:Float, color:FlxColor, alpha:Float = 1):FlxSprite
+	{
+		var spr:FlxSprite = new FlxSprite(x, y).makeGraphic(1, 1, color);
+		spr.scale.set(w, h);
+		spr.updateHitbox();
+		spr.x = x;
+		spr.y = y;
+		spr.alpha = alpha;
+		spr.scrollFactor.set();
+		return spr;
+	}
+
+	function makePngText(x:Float, y:Float, w:Float, text:String, size:Int = 14, color:FlxColor = FlxColor.WHITE):FlxText
+	{
+		var t:FlxText = new FlxText(x, y, w, text, size);
+		t.color = color;
+		t.scrollFactor.set();
+		return t;
+	}
+
+	function scanPngFolder(folder:String, prefix:String, found:Array<PngEntry>, depth:Int)
+	{
+		#if sys
+		if (depth > 8 || !FileSystem.exists(folder) || !FileSystem.isDirectory(folder))
+			return;
+
+		for (file in FileSystem.readDirectory(folder))
+		{
+			var full:String = folder + file;
+			if (FileSystem.isDirectory(full))
+			{
+				scanPngFolder(full + '/', prefix + file + '/', found, depth + 1);
+				continue;
+			}
+
+			if (!file.toLowerCase().endsWith('.png'))
+				continue;
+
+			var baseName:String = file.substr(0, file.length - 4);
+			found.push({name: prefix + baseName, hasXml: FileSystem.exists(folder + baseName + '.xml')});
+		}
+		#end
+	}
+
+	function openPngPicker()
+	{
+		pngEntries = [];
+		scanPngFolder(PNG_DIR, '', pngEntries, 0);
+		pngEntries.sort(function(a:PngEntry, b:PngEntry):Int
+		{
+			var ak:String = a.name.toLowerCase();
+			var bk:String = b.name.toLowerCase();
+			return ak < bk ? -1 : (ak > bk ? 1 : 0);
+		});
+		pngScroll = 0;
+
+		if (pngPickerGroup == null)
+			buildPngPicker();
+
+		pngInfoText.text = (pngEntries.length > 0) ? '${pngEntries.length} PNG in $PNG_DIR' : 'Nessun PNG trovato in $PNG_DIR';
+		refreshPngRows();
+		pngPickerGroup.visible = pngPickerGroup.active = pngPickerOpen = true;
+	}
+
+	function closePngPicker()
+	{
+		pngPickerOpen = false;
+		if (pngPickerGroup != null)
+			pngPickerGroup.visible = pngPickerGroup.active = false;
+	}
+
+	function buildPngPicker()
+	{
+		pngPanelH = 70 + PNG_ROWS * PNG_ROW_H + 40;
+		pngPanelX = Math.round((FlxG.width - PNG_PICKER_W) / 2);
+		pngPanelY = Math.round((FlxG.height - pngPanelH) / 2);
+
+		pngPickerGroup = new FlxSpriteGroup();
+		pngPickerGroup.cameras = [camHUD];
+		pngPickerGroup.scrollFactor.set();
+
+		pngPickerGroup.add(makePngRect(0, 0, FlxG.width, FlxG.height, FlxColor.BLACK, 0.7));
+		pngPickerGroup.add(makePngRect(pngPanelX - 2, pngPanelY - 2, PNG_PICKER_W + 4, pngPanelH + 4, FlxColor.WHITE, 0.9));
+		pngPickerGroup.add(makePngRect(pngPanelX, pngPanelY, PNG_PICKER_W, pngPanelH, 0xFF1E1E26));
+
+		pngPickerGroup.add(makePngText(pngPanelX + 16, pngPanelY + 12, PNG_PICKER_W - 32, 'Import PNG', 20));
+		pngInfoText = makePngText(pngPanelX + 16, pngPanelY + 42, PNG_PICKER_W - 32, '', 12, 0xFFB0B0B0);
+		pngPickerGroup.add(pngInfoText);
+
+		pngHoverRect = makePngRect(pngPanelX + 8, pngPanelY + 70, PNG_PICKER_W - 16, PNG_ROW_H, 0xFF3A5A9A, 0.8);
+		pngHoverRect.visible = false;
+		pngPickerGroup.add(pngHoverRect);
+
+		pngRows = [];
+		for (i in 0...PNG_ROWS)
+		{
+			var row:FlxText = makePngText(pngPanelX + 18, pngPanelY + 72 + i * PNG_ROW_H, PNG_PICKER_W - 36, '', 14);
+			pngRows.push(row);
+			pngPickerGroup.add(row);
+		}
+
+		pngPickerGroup.add(makePngText(pngPanelX + 16, pngPanelY + 70 + PNG_ROWS * PNG_ROW_H + 10, PNG_PICKER_W - 32,
+			'Click = importa  |  Rotella / PagSu / PagGiu = scorri  |  ESC / click destro = chiudi', 12, 0xFFE0E0E0));
+
+		add(pngPickerGroup);
+		pngPickerGroup.visible = pngPickerGroup.active = false;
+	}
+
+	function refreshPngRows()
+	{
+		var maxScroll:Int = Std.int(Math.max(0, pngEntries.length - PNG_ROWS));
+		pngScroll = Std.int(FlxMath.bound(pngScroll, 0, maxScroll));
+
+		for (i in 0...PNG_ROWS)
+		{
+			var row:FlxText = pngRows[i];
+			var idx:Int = pngScroll + i;
+			if (idx < pngEntries.length)
+			{
+				var e:PngEntry = pngEntries[idx];
+				row.text = e.name + (e.hasXml ? '   [PNG + XML]' : '   [PNG]');
+				row.color = e.hasXml ? 0xFF8CFF9C : FlxColor.WHITE;
+			}
+			else
+				row.text = '';
+		}
+	}
+
+	// Gestisce l'input del picker (modale). Ritorna true se il picker e' aperto.
+	function updatePngPicker():Bool
+	{
+		if (!pngPickerOpen)
+			return false;
+
+		if (FlxG.keys.justPressed.ESCAPE || FlxG.mouse.justPressedRight)
+		{
+			closePngPicker();
+			return true;
+		}
+
+		if (FlxG.mouse.wheel != 0)
+		{
+			pngScroll -= FlxG.mouse.wheel * 3;
+			refreshPngRows();
+		}
+		if (FlxG.keys.justPressed.PAGEUP)
+		{
+			pngScroll -= PNG_ROWS;
+			refreshPngRows();
+		}
+		if (FlxG.keys.justPressed.PAGEDOWN)
+		{
+			pngScroll += PNG_ROWS;
+			refreshPngRows();
+		}
+
+		FlxG.mouse.getScreenPosition(camHUD, _mousePoint);
+		var mx:Float = _mousePoint.x;
+		var my:Float = _mousePoint.y;
+
+		var listX:Float = pngPanelX + 8;
+		var listY:Float = pngPanelY + 70;
+		var overList:Bool = (mx >= listX && mx < listX + PNG_PICKER_W - 16 && my >= listY && my < listY + PNG_ROWS * PNG_ROW_H);
+		var hoverIdx:Int = -1;
+		if (overList)
+		{
+			var row:Int = Std.int((my - listY) / PNG_ROW_H);
+			if (pngScroll + row < pngEntries.length)
+				hoverIdx = pngScroll + row;
+		}
+
+		pngHoverRect.visible = (hoverIdx >= 0);
+		if (hoverIdx >= 0)
+			pngHoverRect.y = listY + (hoverIdx - pngScroll) * PNG_ROW_H;
+
+		if (FlxG.mouse.justPressed)
+		{
+			if (hoverIdx >= 0)
+				importPngEntry(pngEntries[hoverIdx]);
+			else if (mx < pngPanelX || mx > pngPanelX + PNG_PICKER_W || my < pngPanelY || my > pngPanelY + pngPanelH)
+				closePngPicker();
+		}
+		return true;
+	}
+
+	// Legge le animazioni da un file Sparrow XML: un'anim per ogni prefisso
+	// (nome del SubTexture senza il numero finale del frame).
+	function readXmlAnimations(xmlPath:String):Array<AnimArray>
+	{
+		var result:Array<AnimArray> = [];
+		#if sys
+		try
+		{
+			var root:Xml = Xml.parse(sys.io.File.getContent(xmlPath)).firstElement();
+			if (root == null)
+				return result;
+
+			var frameNum:EReg = ~/[0-9]+$/;
+			var seen:Map<String, Bool> = new Map();
+			for (sub in root.elementsNamed('SubTexture'))
+			{
+				var frameName:String = sub.get('name');
+				if (frameName == null)
+					continue;
+
+				var prefix:String = frameNum.replace(frameName, '');
+				if (prefix.length < 1)
+					prefix = frameName;
+				if (seen.exists(prefix))
+					continue;
+
+				seen.set(prefix, true);
+				result.push({
+					anim: prefix,
+					name: prefix,
+					fps: 24,
+					loop: false,
+					indices: [],
+					offsets: [0, 0]
+				});
+			}
+		}
+		catch (e:Dynamic)
+		{
+			trace('Could not read XML "$xmlPath": $e');
+		}
+		#end
+		return result;
+	}
+
+	function importPngEntry(entry:PngEntry)
+	{
+		var anims:Array<AnimArray> = entry.hasXml ? readXmlAnimations('$PNG_DIR${entry.name}.xml') : [];
+		var type:String = (anims.length > 0) ? 'animatedSprite' : 'sprite';
+		var baseName:String = entry.name.substring(entry.name.lastIndexOf('/') + 1);
+
+		var data:Dynamic = {type: type, name: findUnoccupiedName(baseName)};
+		if (type == 'animatedSprite')
+		{
+			data.animations = anims;
+			data.firstAnimation = anims[0].anim;
+		}
+
+		insertMeta(new StageEditorMetaSprite(data, new ModchartSprite()));
+		closePngPicker();
+
+		var selected = getSelected();
+		if (selected == null)
+			return;
+
+		tryLoadImage(selected, entry.name);
+
+		if (type == 'animatedSprite')
+		{
+			for (anim in anims)
+				selected.sprite.animation.addByPrefix(anim.anim, anim.name, anim.fps, anim.loop);
+			selected.sprite.animation.play(selected.firstAnimation, true);
+		}
+
+		selected.sprite.x = Math.round(FlxG.camera.scroll.x + FlxG.width / 2 - selected.sprite.width / 2);
+		selected.sprite.y = Math.round(FlxG.camera.scroll.y + FlxG.height / 2 - selected.sprite.height / 2);
+		posTxt.visible = true;
+		posTxt.text = 'X: ${selected.sprite.x}\nY: ${selected.sprite.y}';
+		updateSelectedUI();
+
+		showOutput('Importato "${entry.name}"' + (type == 'animatedSprite' ? ' (${anims.length} animazioni da XML)' : ''));
 	}
 
 	function spriteCreatePopup()
@@ -1582,6 +1876,9 @@ class StageEditorState extends MusicBeatState implements PsychUIEventHandler.Psy
 
 	override function update(elapsed:Float)
 	{
+		if (updatePngPicker())
+			return;
+
 		if (createPopup.visible && (FlxG.mouse.justPressedRight || (FlxG.mouse.justPressed && !FlxG.mouse.overlaps(createPopup, camHUD))))
 			createPopup.visible = createPopup.active = false;
 
@@ -1828,7 +2125,7 @@ class StageEditorState extends MusicBeatState implements PsychUIEventHandler.Psy
 
 	function isMouseOverUI():Bool
 	{
-		if (helpBg.visible || createPopup.visible)
+		if (helpBg.visible || createPopup.visible || pngPickerOpen)
 			return true;
 		if (UI_box.visible && FlxG.mouse.overlaps(UI_box, camHUD))
 			return true;
@@ -3129,4 +3426,10 @@ class StageEditorAnimationSubstate extends MusicBeatSubstate
 			close();
 		}
 	}
+}
+
+typedef PngEntry =
+{
+	var name:String; // path relativo a mods/images, senza estensione
+	var hasXml:Bool;
 }
