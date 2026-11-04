@@ -52,7 +52,7 @@ typedef PixelDialogueFile =
  * Asset (tutti in "images/", cercati in mods/ e in assets/shared/):
  *   custom_dialogs/dialogBoxes/<box>.png + .xml (+ .json)   animazioni: "open" e "normal"
  *   custom_dialogs/dialogHands/<hand>.png                   immagine singola, senza xml
- *   characters/portrait_<personaggio>.png + .xml            un frame per espressione (es. default0000)
+ *   custom_dialogs/dialogPortraits/portrait_<personaggio>.png + .xml            un frame per espressione (es. default0000)
  * Suoni: dal gioco originale (Paths.sound), nessun suono da custom_dialogs.
  */
 class DialogueBoxPixel extends FlxSpriteGroup
@@ -64,7 +64,7 @@ class DialogueBoxPixel extends FlxSpriteGroup
 
 	static inline var BOXES_FOLDER:String = 'custom_dialogs/dialogBoxes/';
 	static inline var HANDS_FOLDER:String = 'custom_dialogs/dialogHands/';
-	static inline var PORTRAIT_PREFIX:String = 'characters/portrait_';
+	static inline var PORTRAIT_PREFIX:String = 'custom_dialogs/dialogPortraits/portrait_';
 	static inline var BG_ALPHA:Float = 0.7;
 
 	// Come DialogueBox / DialogueBoxPsych, per restare compatibile con School.hx e PlayState
@@ -587,7 +587,7 @@ class DialogueBoxPixel extends FlxSpriteGroup
 		return info;
 	}
 
-	/** Atlas del ritratto: images/characters/portrait_<nome>.png + .xml. Null se non esiste. */
+	/** Atlas del ritratto: images/custom_dialogs/dialogPortraits/portrait_<nome>.png + .xml. Null se non esiste. */
 	public static function loadPortraitFrames(name:String):FlxAtlasFrames
 	{
 		if (name == null || name.length < 1)
