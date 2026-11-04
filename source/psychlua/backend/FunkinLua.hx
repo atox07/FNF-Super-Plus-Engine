@@ -2127,55 +2127,15 @@ class FunkinLua
 	}
 
 	// ------------------------------------------------------------------
-	// [COMPAT] Wrapper di compatibilita' 0.6.3 -> 1.0.x
-	// Cerca "scripts/_compatibility_wrapper.lua" prima nella mod attiva, poi in mods/.
-	// Se il file non esiste non succede nulla. Gli script con "@luamode raw" sono esclusi.
+	// [COMPAT] Layer di compatibilita' 0.6.3 -> 1.0.x, ora integrato (psychlua.CompatLayer).
+	// Gli script con "@luamode raw" e il vecchio file wrapper esterno sono esclusi.
 	// ------------------------------------------------------------------
-	static inline var COMPAT_WRAPPER_FILE:String = 'scripts/_compatibility_wrapper.lua';
-
-	function findCompatWrapper():Null<String>
-	{
-		#if (sys && MODS_ALLOWED)
-		var candidates:Array<String> = [];
-		if (Mods.currentModDirectory != null && Mods.currentModDirectory.length > 0)
-			candidates.push(Paths.mods(Mods.currentModDirectory + '/' + COMPAT_WRAPPER_FILE));
-		candidates.push(Paths.mods(COMPAT_WRAPPER_FILE));
-
-		for (path in candidates)
-		{
-			if (FileSystem.exists(path))
-				return path;
-		}
-		#end
-		return null;
-	}
-
 	function injectCompatWrapper():Void
 	{
-		#if (sys && MODS_ALLOWED)
-		try
-		{
-			// Non iniettare il wrapper in se stesso, ne' negli script che chiedono il Lua "raw"
-			if (scriptName.replace('\\', '/').endsWith('_compatibility_wrapper.lua') || luaMode == 'raw')
-				return;
+		if (luaMode == 'raw' || scriptName.replace('\\', '/').endsWith('_compatibility_wrapper.lua'))
+			return;
 
-			var path:Null<String> = findCompatWrapper();
-			if (path == null)
-				return;
-
-			var result:Dynamic = LuaL.dostring(lua, File.getContent(path));
-			if (result != 0)
-			{
-				var err:String = Lua.tostring(lua, -1);
-				Lua.pop(lua, 1);
-				trace('[compat] errore nel wrapper per "$scriptName": $err');
-			}
-		}
-		catch (e:Dynamic)
-		{
-			trace('[compat] impossibile caricare il wrapper: $e');
-		}
-		#end
+		psychlua.CompatLayer.inject(this);
 	}
 
 	function loadNotitgDataPrelude(targetScript:String):Void
