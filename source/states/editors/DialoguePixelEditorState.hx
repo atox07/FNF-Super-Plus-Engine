@@ -12,7 +12,7 @@ import states.editors.content.Prompt;
  * Editor dei dialoghi pixel (Week 6).
  * - L'anteprima è la VERA DialogueBoxPixel (stessa classe del gioco), quindi quello che vedi è quello che ottieni.
  * - I personaggi vengono dai .json nella cartella "characters/" (fuori da images).
- * - Il ritratto di ogni personaggio è images/characters/portrait_<nome>.png + .xml
+ * - Il ritratto di ogni personaggio è images/custom_dialogs/dialogPortraits/portrait_<nome>.png + .xml
  * - Salva un file da mettere in data/<canzone>/dialogue-pixel.json
  *
  * Tasti: A/D riga precedente/successiva, W/S espressione, O elimina riga, P aggiungi riga, SPACE rivedi la riga, ESC esci.
@@ -129,7 +129,7 @@ class DialoguePixelEditorState extends MusicBeatState implements PsychUIEventHan
 		var frames = DialogueBoxPixel.loadPortraitFrames(line.portrait);
 		if (frames == null)
 		{
-			infoText.text = 'Portrait NOT found: images/characters/portrait_' + line.portrait + '.png + .xml';
+			infoText.text = 'Portrait NOT found: images/custom_dialogs/dialogPortraits/portrait_' + line.portrait + '.png + .xml';
 			return;
 		}
 		infoText.text = 'Expressions: ' + DialogueBoxPixel.getExpressions(frames).join(', ');
