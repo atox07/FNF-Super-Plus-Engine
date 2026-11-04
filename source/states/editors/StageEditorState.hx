@@ -200,6 +200,24 @@ class StageEditorState extends MusicBeatState implements PsychUIEventHandler.Psy
 	{
 		loadJsonAssetDirectory(); // Load directory before loading sprites!
 
+		#if sys
+		if (stageJson.objects == null || stageJson.objects.length < 1)
+		{
+			var luaPath:String = Paths.getPath('stages/' + lastLoadedStage + '.lua', TEXT, null, true);
+			if (luaPath != null && FileSystem.exists(luaPath))
+			{
+				var fromLua:Array<Dynamic> = loadStageLuaObjects(luaPath);
+				if (fromLua.length > 0)
+				{
+					stageJson.objects = fromLua;
+					showOutput('Loaded ${fromLua.length} object(s) from Lua.');
+				}
+				else
+					showOutput('Lua found but no --@objects block; stage is not editable.', true);
+			}
+		}
+		#end
+
 		for (spr in stageSprites)
 			if (spr != null && !StageData.reservedNames.contains(spr.type))
 				spr.sprite = FlxDestroyUtil.destroy(spr.sprite);
@@ -255,7 +273,7 @@ class StageEditorState extends MusicBeatState implements PsychUIEventHandler.Psy
 				showOutput('Hardcoded preview: BG visible but NOT saveable.');
 			}
 			else
-				showOutput('No BG sprites for "$lastLoadedStage". Custom stages need "objects" in their JSON.', true);
+				showOutput('No BG sprites for "$lastLoadedStage". Add some and Save to generate the Lua.', true);
 		}
 
 		stageSprites = [for (spr in stageSprites) if (spr != null) spr];
@@ -296,7 +314,7 @@ class StageEditorState extends MusicBeatState implements PsychUIEventHandler.Psy
 					{type: 'sprite', name: 'stagecurtains', image: 'stagecurtains', x: -500, y: -300, scale: [0.9, 0.9], scroll: [1.3, 1.3], alpha: 1, angle: 0, color: 'FFFFFF', filters: LOW_QUALITY | HIGH_QUALITY, flipX: false, flipY: false, antialiasing: true}
 				];
 			case 'spooky':
-				// week2: images/halloween_bg(.png/.xml) e halloween_bg_low (versione low quality)
+				// week2: images/halloween_bg(.png/.xml) and halloween_bg_low (low quality version)
 				return [
 					hcSpr('halloween_bg_low', 'halloween_bg_low', -200, -100, 1, 1, 1, LOW_QUALITY),
 					hcAnim('halloweenBG', 'halloween_bg', -200, -100, [
@@ -707,7 +725,7 @@ class StageEditorState extends MusicBeatState implements PsychUIEventHandler.Psy
 	}
 
 	// ---------------------------------------------------------------
-	// PNG picker: reads mods/images (and subfolders), only PNG or PNG + XML
+	// PNG picker: reads mods/images (and subfolders), PNG only or PNG + XML
 	// ---------------------------------------------------------------
 	static inline var PNG_DIR:String = 'mods/images/';
 	static inline var PNG_PICKER_W:Int = 560;
@@ -784,7 +802,7 @@ class StageEditorState extends MusicBeatState implements PsychUIEventHandler.Psy
 		if (pngPickerGroup == null)
 			buildPngPicker();
 
-		pngInfoText.text = (pngEntries.length > 0) ? '${pngEntries.length} PNG in $PNG_DIR' : 'No PNGs found in $PNG_DIR';
+		pngInfoText.text = (pngEntries.length > 0) ? '${pngEntries.length} PNG in $PNG_DIR' : 'No PNG found in $PNG_DIR';
 		refreshPngRows();
 		pngPickerGroup.visible = pngPickerGroup.active = pngPickerOpen = true;
 	}
@@ -853,7 +871,7 @@ class StageEditorState extends MusicBeatState implements PsychUIEventHandler.Psy
 		}
 	}
 
-	// Handles picker input (modal). Returns true if the picker is open.
+	// Handles the picker input (modal). Returns true if the picker is open.
 	function updatePngPicker():Bool
 	{
 		if (!pngPickerOpen)
@@ -910,8 +928,8 @@ class StageEditorState extends MusicBeatState implements PsychUIEventHandler.Psy
 		return true;
 	}
 
-	// Legge le animazioni da un file Sparrow XML: un'anim per ogni prefisso
-	// (nome del SubTexture senza il numero finale del frame).
+	// Reads the animations from a Sparrow XML file: one anim per prefix
+	// (the SubTexture name without the trailing frame number).
 	function readXmlAnimations(xmlPath:String):Array<AnimArray>
 	{
 		var result:Array<AnimArray> = [];
@@ -990,7 +1008,7 @@ class StageEditorState extends MusicBeatState implements PsychUIEventHandler.Psy
 		posTxt.text = 'X: ${selected.sprite.x}\nY: ${selected.sprite.y}';
 		updateSelectedUI();
 
-		showOutput('Importato "${entry.name}"' + (type == 'animatedSprite' ? ' (${anims.length} animations from XML)' : ''));
+		showOutput('Imported "${entry.name}"' + (type == 'animatedSprite' ? ' (${anims.length} animations from XML)' : ''));
 	}
 
 	function spriteCreatePopup()
@@ -1982,8 +2000,8 @@ class StageEditorState extends MusicBeatState implements PsychUIEventHandler.Psy
 		if (FlxG.keys.pressed.I || (touchPad.buttonUp.pressed && touchPad.buttonG.pressed))
 			camY -= camMove;
 
-		// ZOOM CON CTRL + ROTELLA (fluido, ancorato al cursore)
-		// In HaxeFlixel lo zoom e' centrato sul CENTRO della camera, quindi:
+		// ZOOM WITH CTRL + MOUSE WHEEL (smooth, anchored to the cursor)
+		// In HaxeFlixel the zoom is centered on the CENTER of the camera, so:
 		// world = scroll + size/2 + (screen - size/2) / zoom
 		if (FlxG.keys.pressed.CONTROL && FlxG.mouse.wheel != 0 && !isMouseOverUI())
 		{
@@ -2006,19 +2024,19 @@ class StageEditorState extends MusicBeatState implements PsychUIEventHandler.Psy
 
 		if (FlxG.keys.justPressed.R || FlxG.keys.pressed.E || FlxG.keys.pressed.Q || touchPad.buttonZ.justPressed || touchPad.buttonX.pressed
 			|| touchPad.buttonY.pressed)
-			zoomAnimating = false; // i tasti zoom hanno la priorita' sullo zoom animato
+			zoomAnimating = false; // the zoom keys take priority over the animated zoom
 
 		if (zoomAnimating)
 		{
 			var cam:FlxCamera = FlxG.camera;
-			// interpolazione esponenziale indipendente dal framerate
+			// exponential interpolation, independent of the framerate
 			cam.zoom += (targetZoom - cam.zoom) * (1 - Math.exp(-elapsed * 14));
 			if (Math.abs(targetZoom - cam.zoom) < targetZoom * 0.0005)
 			{
 				cam.zoom = targetZoom;
 				zoomAnimating = false;
 			}
-			// mantiene il punto sotto al cursore fermo mentre lo zoom cambia
+			// keeps the point under the cursor fixed while the zoom changes
 			cam.scroll.x = zoomAnchorWX - cam.width / 2 - (zoomAnchorSX - cam.width / 2) / cam.zoom;
 			cam.scroll.y = zoomAnchorWY - cam.height / 2 - (zoomAnchorSY - cam.height / 2) / cam.zoom;
 		}
@@ -2065,7 +2083,7 @@ class StageEditorState extends MusicBeatState implements PsychUIEventHandler.Psy
 			rightAccX = rightAccY = 0;
 		if (FlxG.mouse.pressedRight && (FlxG.mouse.deltaScreenX != 0 || FlxG.mouse.deltaScreenY != 0))
 		{
-			// pixel schermo -> pixel mondo (divido per lo zoom) e tengo i decimali, cosi' l'oggetto segue il cursore
+			// screen pixels -> world pixels (divide by the zoom) and keep the decimals, so the object follows the cursor
 			rightAccX += FlxG.mouse.deltaScreenX / FlxG.camera.zoom * ctrlMult;
 			rightAccY += FlxG.mouse.deltaScreenY / FlxG.camera.zoom * ctrlMult;
 			var stepX:Float = rightAccX < 0 ? Math.ceil(rightAccX) : Math.floor(rightAccX);
@@ -2136,7 +2154,7 @@ class StageEditorState extends MusicBeatState implements PsychUIEventHandler.Psy
 		return FlxG.mouse.getScreenPosition(camHUD, _mousePoint).y >= FlxG.height - 60;
 	}
 
-	// Hit test con: scala negativa, rotazione (angle) e tolleranza (pad, in pixel mondo)
+	// Hit test with: negative scale, rotation (angle) and tolerance (pad, in world pixels)
 	function mouseHitsSprite(spr:FlxSprite, worldX:Float, worldY:Float, pad:Float = 0):Bool
 	{
 		var w:Float = Math.abs(spr.frameWidth * spr.scale.x);
@@ -2164,8 +2182,8 @@ class StageEditorState extends MusicBeatState implements PsychUIEventHandler.Psy
 		return px >= left - pad && px <= left + w + pad && py >= top - pad && py <= top + h + pad;
 	}
 
-	// Posizione del mouse nello "spazio" di uno sprite con un certo scrollFactor.
-	// Zoom centrato sul centro camera: x = scroll*sf + size/2 + (screen - size/2) / zoom
+	// Mouse position in the "space" of a sprite with a given scrollFactor.
+	// Zoom centered on the camera center: x = scroll*sf + size/2 + (screen - size/2) / zoom
 	function mouseToSpriteSpace(spr:FlxSprite, out:FlxPoint):FlxPoint
 	{
 		var cam:FlxCamera = FlxG.camera;
@@ -2174,12 +2192,12 @@ class StageEditorState extends MusicBeatState implements PsychUIEventHandler.Psy
 		return out;
 	}
 
-	// Tutti gli oggetti sotto il mouse, ordinati: prima quello selezionato nella lista,
-	// poi per area crescente (i piccoli prima, cosi' una luce sotto le curtains resta prendibile).
+	// All the objects under the mouse, sorted: first the one selected in the list,
+	// then by increasing area (small ones first, so a light under the curtains can still be grabbed).
 	function getObjectsAtMouse():Array<Int>
 	{
 		var found:Array<{index:Int, area:Float}> = [];
-		var pad:Float = 6 / FlxG.camera.zoom; // tolleranza ~6px a schermo contro i "click error"
+		var pad:Float = 6 / FlxG.camera.zoom; // ~6px screen tolerance against "click errors"
 		for (i in 0...stageSprites.length)
 		{
 			var meta:StageEditorMetaSprite = stageSprites[i];
@@ -2203,12 +2221,12 @@ class StageEditorState extends MusicBeatState implements PsychUIEventHandler.Psy
 				return 1;
 			if (a.area != b.area)
 				return a.area < b.area ? -1 : 1;
-			return b.index - a.index; // a parita' di area vince quello disegnato davanti
+			return b.index - a.index; // on equal area, the one drawn in front wins
 		});
 		return [for (f in found) f.index];
 	}
 
-	// indice in stageSprites dell'oggetto selezionato nella lista (-1 se nessuno)
+	// index in stageSprites of the object selected in the list (-1 if none)
 	function getSelectedIndex():Int
 	{
 		var sel:Int = spriteListRadioGroup.checked;
@@ -2236,7 +2254,7 @@ class StageEditorState extends MusicBeatState implements PsychUIEventHandler.Psy
 		updateSelectedUI();
 	}
 
-	// stato per il click destro (deselect) e per il ciclo tra oggetti sovrapposti
+	// state for the right click (deselect) and for cycling through overlapping objects
 	var rightDownX:Float = 0;
 	var rightDownY:Float = 0;
 	var rightDownOnUI:Bool = false;
@@ -2248,7 +2266,7 @@ class StageEditorState extends MusicBeatState implements PsychUIEventHandler.Psy
 
 	function updateMouseObjectDrag()
 	{
-		// CLICK DESTRO senza trascinare = deseleziona tutto (il drag col destro continua a muovere l'oggetto)
+		// RIGHT CLICK without dragging = deselect all (dragging with the right button still moves the object)
 		if (FlxG.mouse.justPressedRight)
 		{
 			rightDownX = FlxG.mouse.screenX;
@@ -2271,7 +2289,7 @@ class StageEditorState extends MusicBeatState implements PsychUIEventHandler.Psy
 				return;
 			}
 
-			// Posizione assoluta: il punto afferrato resta sotto il cursore (indipendente da zoom/scrollFactor/camera)
+			// Absolute position: the grabbed point stays under the cursor (independent of zoom/scrollFactor/camera)
 			mouseToSpriteSpace(dragSprite.sprite, _mousePoint);
 			var newX:Float = Math.round(_mousePoint.x - dragPosX);
 			var newY:Float = Math.round(_mousePoint.y - dragPosY);
@@ -2291,7 +2309,7 @@ class StageEditorState extends MusicBeatState implements PsychUIEventHandler.Psy
 
 			if (candidates.length > 0)
 			{
-				// stesso punto cliccato di nuovo (senza aver trascinato) -> passa al prossimo oggetto sovrapposto
+				// same point clicked again (without dragging) -> switch to the next overlapping object
 				var now:Float = haxe.Timer.stamp();
 				var sameSpot:Bool = Math.abs(FlxG.mouse.screenX - lastPickX) + Math.abs(FlxG.mouse.screenY - lastPickY) < 6
 					&& now - lastPickTime < 2 && !dragMoved;
@@ -2303,7 +2321,7 @@ class StageEditorState extends MusicBeatState implements PsychUIEventHandler.Psy
 			}
 			else if (selIndex >= 0)
 			{
-				// click a vuoto: sposta comunque l'oggetto selezionato dalla lista (movimento relativo)
+				// click on empty space: still moves the object selected in the list (relative movement)
 				target = selIndex;
 				pickCycle = 0;
 				lastPickX = -9999;
@@ -2315,7 +2333,7 @@ class StageEditorState extends MusicBeatState implements PsychUIEventHandler.Psy
 					selectMeta(target);
 				dragSprite = stageSprites[target];
 				dragMoved = false;
-				// offset tra il punto cliccato e la posizione dello sprite
+				// offset between the clicked point and the sprite position
 				mouseToSpriteSpace(dragSprite.sprite, _mousePoint);
 				dragPosX = _mousePoint.x - dragSprite.x;
 				dragPosY = _mousePoint.y - dragSprite.y;
@@ -2437,20 +2455,62 @@ class StageEditorState extends MusicBeatState implements PsychUIEventHandler.Psy
 		selectionSprites.draw();
 	}
 
-	function saveObjectsToJson()
+	// Current sprites as JSON objects (same data formatToJson() produces). Used for the --@objects block of the Lua.
+	function collectObjects():Array<Dynamic>
 	{
-		if (hardcodedPreview)
-		{
-			stageJson.objects = originalJsonObjects.copy();
-			return;
-		}
-		stageJson.objects = [];
+		var objs:Array<Dynamic> = [];
 		for (basic in stageSprites)
 		{
 			var json:Dynamic = basic.formatToJson();
 			if (json != null)
-				stageJson.objects.push(json);
+				objs.push(json);
 		}
+		return objs;
+	}
+
+	// Only keeps stageJson.objects up to date IN MEMORY (directory dropdown reload).
+	// It is never written to the JSON on disk: the objects go in the Lua (--@editor-meta).
+	function saveObjectsToJson()
+	{
+		stageJson.objects = hardcodedPreview ? originalJsonObjects.copy() : collectObjects();
+	}
+
+	// Reads the "--@objects" line from the "--@editor-meta" block of a stage Lua.
+	function loadStageLuaObjects(luaPath:String):Array<Dynamic>
+	{
+		#if sys
+		try
+		{
+			var inMeta:Bool = false;
+			for (line in sys.io.File.getContent(luaPath).split('\n'))
+			{
+				var l:String = line.trim();
+				if (l == '--@editor-meta')
+				{
+					inMeta = true;
+					continue;
+				}
+				if (l == '--@end-editor-meta')
+					break;
+
+				if (inMeta && l.startsWith('--@objects '))
+				{
+					var parsed:Dynamic = haxe.Json.parse(l.substr('--@objects '.length));
+					if (Std.isOfType(parsed, Array))
+						return cast parsed;
+
+					trace('"--@objects" in "$luaPath" is not an array.');
+					return [];
+				}
+			}
+			trace('No "--@objects" line found in "$luaPath".');
+		}
+		catch (e:Dynamic)
+		{
+			trace('Could not read objects from "$luaPath": $e');
+		}
+		#end
+		return [];
 	}
 
 	function saveData()
@@ -2458,50 +2518,265 @@ class StageEditorState extends MusicBeatState implements PsychUIEventHandler.Psy
 		if (_file != null)
 			return;
 
-		var data:String;
 		var fileName:String = lastLoadedStage;
-
 		if (hardcodedPreview)
 		{
-			// Stage hardcoded: non si puo' sovrascrivere, quindi esportiamo uno stage JSON NUOVO
-			// ("<stage>2") con tutti gli sprite (posizioni/scale/ordine attuali) dentro "objects".
-			// Il nuovo stage non dipende piu' dal codice hardcoded.
-			var out:Dynamic = {};
-			for (field in Reflect.fields(stageJson))
+			// Hardcoded stage: it can't be overwritten, so we export a NEW stage ("<stage>2").
+			fileName = lastLoadedStage + '2';
+			showOutput('Hardcoded stage: exporting as NEW stage "$fileName". The .json has no objects; the sprites are in the .lua (with its --@editor-meta block). Put both in stages/ and use it as the song stage.');
+		}
+
+		// The JSON only holds the stage data: the sprites go in the Lua, so no "objects".
+		var out:Dynamic = {};
+		for (field in Reflect.fields(stageJson))
+			if (field != 'objects')
 				Reflect.setField(out, field, Reflect.field(stageJson, field));
 
-			var objs:Array<Dynamic> = [];
-			for (basic in stageSprites)
-			{
-				var json:Dynamic = basic.formatToJson();
-				if (json != null)
-					objs.push(json);
-			}
-			out.objects = objs;
-
-			fileName = lastLoadedStage + '2';
-			data = haxe.Json.stringify(out, '\t');
-			showOutput('Hardcoded stage: exporting as NEW stage "$fileName.json". Put it in stages/ and use it as the song stage.');
-		}
-		else
-		{
-			saveObjectsToJson();
-			data = haxe.Json.stringify(stageJson, '\t');
-		}
+		var data:String = haxe.Json.stringify(out, '\t');
+		var lua:String = generateStageLua(fileName);
 
 		#if mobile
 		unsavedProgress = false;
 		StorageUtil.saveContent('$fileName.json', data);
+		StorageUtil.saveContent('$fileName.lua', lua);
 		#else
 		if (data.length > 0)
 		{
-			_file = new FileReference();
-			_file.addEventListener(#if desktop Event.SELECT #else Event.COMPLETE #end, onSaveComplete);
-			_file.addEventListener(Event.CANCEL, onSaveCancel);
-			_file.addEventListener(IOErrorEvent.IO_ERROR, onSaveError);
-			_file.save(data, '$fileName.json');
+			_pendingLua = lua;
+			_pendingLuaName = '$fileName.lua';
+			startSave(data, '$fileName.json');
 		}
 		#end
+	}
+
+	function startSave(content:String, name:String)
+	{
+		_file = new FileReference();
+		_file.addEventListener(#if desktop Event.SELECT #else Event.COMPLETE #end, onSaveComplete);
+		_file.addEventListener(Event.CANCEL, onSaveCancel);
+		_file.addEventListener(IOErrorEvent.IO_ERROR, onSaveError);
+		_file.save(content, name);
+	}
+
+	var _pendingLua:String = null;
+	var _pendingLuaName:String = null;
+
+	// ---------------------------------------------------------------
+	// Stage Lua script generation
+	// ---------------------------------------------------------------
+	function luaStr(s:String):String
+		return "'" + s.replace("\\", "\\\\").replace("'", "\\'").replace("\n", "\\n") + "'";
+
+	function luaNum(v:Dynamic):String
+	{
+		var f:Float = (v == null) ? 0 : Std.parseFloat(Std.string(v));
+		if (Math.isNaN(f))
+			f = 0;
+		return Std.string(Math.round(f * 10000) / 10000);
+	}
+
+	// Returns the RRGGBB hex or null if the color is white/invalid (default).
+	function luaColorHex(c:Dynamic):String
+	{
+		if (c == null)
+			return null;
+		var str:String = Std.string(c).trim();
+		if (str.startsWith('#'))
+			str = str.substr(1);
+		if (str.toLowerCase().startsWith('0x'))
+			str = str.substr(2);
+		if (!~/^[0-9A-Fa-f]{6}([0-9A-Fa-f]{2})?$/.match(str))
+			return null;
+		str = str.substr(str.length - 6).toUpperCase();
+		return (str == 'FFFFFF') ? null : str;
+	}
+
+	function luaCall(fn:String, args:Array<String>):String
+		return fn + '(' + args.join(', ') + ')';
+
+	function generateStageLua(stageName:String):String
+	{
+		var groupOf:Map<String, String> = [
+			'gf' => 'gfGroup', 'gfGroup' => 'gfGroup',
+			'dad' => 'dadGroup', 'dadGroup' => 'dadGroup',
+			'boyfriend' => 'boyfriendGroup', 'boyfriendGroup' => 'boyfriendGroup'
+		];
+
+		var totalChars:Int = 0;
+		for (basic in stageSprites)
+			if (basic.type != null && groupOf.exists(basic.type))
+				totalChars++;
+
+		var body:Array<String> = [];
+		var order:Array<String> = [];
+		var charsSeen:Int = 0;
+		var anchor:String = null; // what the next sprite "between" the characters must follow
+
+		for (basic in stageSprites)
+		{
+			var d:Dynamic = basic.formatToJson();
+			if (d == null)
+				continue;
+
+			var type:String = Std.string(d.type);
+			if (groupOf.exists(type))
+			{
+				charsSeen++;
+				anchor = luaStr(groupOf.get(type));
+				continue;
+			}
+			if (type != 'square' && type != 'sprite' && type != 'animatedSprite')
+				continue;
+
+			var name:String = (d.name != null) ? Std.string(d.name) : 'sprite' + body.length;
+			var tag:String = luaStr(name);
+			var x:String = luaNum(d.x);
+			var y:String = luaNum(d.y);
+
+			// Load filters (LOW_QUALITY = 1, HIGH_QUALITY = 2, STORY_MODE = 4, FREEPLAY = 8)
+			var filters:Int = (d.filters != null) ? Std.int(d.filters) : 3;
+			var low:Bool = (filters & 1) != 0;
+			var high:Bool = (filters & 2) != 0;
+			var story:Bool = (filters & 4) != 0;
+			var free:Bool = (filters & 8) != 0;
+			if ((!low && !high) || (story && free))
+			{
+				body.push('\t-- ' + name + ': skipped (its filters never show it)');
+				continue;
+			}
+
+			var conds:Array<String> = [];
+			if (low && !high)
+				conds.push('lowQuality');
+			else if (high && !low)
+				conds.push('not lowQuality');
+			if (story)
+				conds.push('isStoryMode');
+			if (free)
+				conds.push('not isStoryMode');
+
+			var lines:Array<String> = [];
+			if (type == 'square')
+			{
+				lines.push(luaCall('makeLuaSprite', [tag, 'nil', x, y]));
+				lines.push(luaCall('makeGraphic', [tag, '1', '1', "'FFFFFF'"]));
+			}
+			else if (type == 'animatedSprite')
+				lines.push(luaCall('makeAnimatedLuaSprite', [tag, luaStr(Std.string(d.image)), x, y]));
+			else
+				lines.push(luaCall('makeLuaSprite', [tag, luaStr(Std.string(d.image)), x, y]));
+
+			var scale:Array<Dynamic> = d.scale;
+			if (scale != null && scale.length > 1 && (scale[0] != 1 || scale[1] != 1))
+				lines.push(luaCall('scaleObject', [tag, luaNum(scale[0]), luaNum(scale[1])]));
+
+			var scroll:Array<Dynamic> = d.scroll;
+			if (scroll != null && scroll.length > 1 && (scroll[0] != 1 || scroll[1] != 1))
+				lines.push(luaCall('setScrollFactor', [tag, luaNum(scroll[0]), luaNum(scroll[1])]));
+
+			var colorHex:String = luaColorHex(d.color);
+			if (colorHex != null)
+				lines.push("setProperty(" + tag + " .. '.color', getColorFromHex('" + colorHex + "'))");
+			if (d.alpha != null && d.alpha != 1)
+				lines.push("setProperty(" + tag + " .. '.alpha', " + luaNum(d.alpha) + ")");
+			if (d.angle != null && d.angle != 0)
+				lines.push("setProperty(" + tag + " .. '.angle', " + luaNum(d.angle) + ")");
+			if (type != 'square')
+			{
+				if (d.flipX == true)
+					lines.push("setProperty(" + tag + " .. '.flipX', true)");
+				if (d.flipY == true)
+					lines.push("setProperty(" + tag + " .. '.flipY', true)");
+				if (d.antialiasing == false)
+					lines.push("setProperty(" + tag + " .. '.antialiasing', false)");
+			}
+
+			if (type == 'animatedSprite' && d.animations != null)
+			{
+				var anims:Array<Dynamic> = d.animations;
+				var firstAnim:String = (d.firstAnimation != null) ? Std.string(d.firstAnimation) : null;
+				for (anim in anims)
+				{
+					var animName:String = luaStr(Std.string(anim.anim));
+					var prefix:String = luaStr(Std.string(anim.name));
+					var fps:String = luaNum(anim.fps != null ? anim.fps : 24);
+					var loop:String = (anim.loop == true) ? 'true' : 'false';
+					var indices:Array<Dynamic> = anim.indices;
+
+					if (indices == null || indices.length < 1)
+						lines.push(luaCall('addAnimationByPrefix', [tag, animName, prefix, fps, loop]));
+					else
+						lines.push(luaCall('addAnimationByIndices', [tag, animName, prefix, luaStr(indices.join(',')), fps, loop]));
+
+					var offsets:Array<Dynamic> = anim.offsets;
+					if (offsets != null && offsets.length > 1 && (offsets[0] != 0 || offsets[1] != 0))
+						lines.push(luaCall('addOffset', [tag, animName, luaNum(offsets[0]), luaNum(offsets[1])]));
+
+					if (firstAnim == null)
+						firstAnim = Std.string(anim.anim);
+				}
+				if (firstAnim != null && anims.length > 0)
+					lines.push(luaCall('playAnim', [tag, luaStr(firstAnim), 'true']));
+			}
+
+			// Position relative to the characters: behind all, in front of all, or in between.
+			var orderLine:String = null;
+			if (charsSeen >= totalChars && charsSeen > 0)
+				lines.push(luaCall('addLuaSprite', [tag, 'true']));
+			else
+			{
+				lines.push(luaCall('addLuaSprite', [tag, 'false']));
+				if (charsSeen > 0 && anchor != null)
+				{
+					orderLine = luaCall('setObjectOrder', [tag, luaCall('getObjectOrder', [anchor]) + ' + 1']);
+					if (conds.length < 1)
+						anchor = tag;
+				}
+			}
+
+			var cond:String = conds.join(' and ');
+			body.push('\t-- ' + name);
+			if (cond.length > 0)
+			{
+				body.push('\tif ' + cond + ' then');
+				for (l in lines)
+					body.push('\t\t' + l);
+				body.push('\tend');
+				if (orderLine != null)
+					order.push('\tif ' + cond + ' then ' + orderLine + ' end');
+			}
+			else
+			{
+				for (l in lines)
+					body.push('\t' + l);
+				if (orderLine != null)
+					order.push('\t' + orderLine);
+			}
+			body.push('');
+		}
+
+		var result:Array<String> = [
+			'--@editor-meta',
+			'--@objects ' + haxe.Json.stringify(collectObjects()),
+			'--@end-editor-meta',
+			'-- Generated by the Stage Editor',
+			'-- Stage: ' + stageName,
+			'',
+			'function onCreate()'
+		];
+		if (body.length < 1)
+			result.push('\t-- no sprites');
+		for (l in body)
+			result.push(l);
+		if (order.length > 0)
+		{
+			result.push('\t-- layering between characters');
+			for (l in order)
+				result.push(l);
+		}
+		result.push('end');
+		result.push('');
+		return result.join('\n');
 	}
 
 	var _file:FileReference;
@@ -2515,6 +2790,14 @@ class StageEditorState extends MusicBeatState implements PsychUIEventHandler.Psy
 		_file.removeEventListener(IOErrorEvent.IO_ERROR, onSaveError);
 		_file = null;
 		FlxG.log.notice('Successfully saved file.');
+
+		if (_pendingLua != null)
+		{
+			var luaContent:String = _pendingLua;
+			var luaName:String = _pendingLuaName;
+			_pendingLua = _pendingLuaName = null;
+			startSave(luaContent, luaName);
+		}
 	}
 
 	function onSaveCancel(_):Void
@@ -2525,6 +2808,7 @@ class StageEditorState extends MusicBeatState implements PsychUIEventHandler.Psy
 		_file.removeEventListener(Event.CANCEL, onSaveCancel);
 		_file.removeEventListener(IOErrorEvent.IO_ERROR, onSaveError);
 		_file = null;
+		_pendingLua = _pendingLuaName = null;
 	}
 
 	function onSaveError(_):Void
@@ -2535,6 +2819,7 @@ class StageEditorState extends MusicBeatState implements PsychUIEventHandler.Psy
 		_file.removeEventListener(Event.CANCEL, onSaveCancel);
 		_file.removeEventListener(IOErrorEvent.IO_ERROR, onSaveError);
 		_file = null;
+		_pendingLua = _pendingLuaName = null;
 		FlxG.log.error('Problem saving file');
 	}
 
@@ -2934,7 +3219,7 @@ class StageEditorExitPrompt extends MusicBeatSubstate
 		var btnYes:PsychUIButton = new PsychUIButton(FlxG.width / 2 - 110, FlxG.height / 2 + 20, 'Yes', function()
 		{
 			close();
-			// FIX: Sostituito FlxTimer.globals.run con new FlxTimer().start
+			// FIX: Replaced FlxTimer.globals.run with new FlxTimer().start
 			new FlxTimer().start(0.01, function(_) {
 				MusicBeatState.switchState(new states.editors.MasterEditorMenu());
 			});
@@ -3430,6 +3715,6 @@ class StageEditorAnimationSubstate extends MusicBeatSubstate
 
 typedef PngEntry =
 {
-	var name:String; // path relativo a mods/images, senza estensione
+	var name:String; // path relative to mods/images, without extension
 	var hasXml:Bool;
 }
