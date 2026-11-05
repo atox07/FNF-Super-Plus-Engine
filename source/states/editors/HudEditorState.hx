@@ -100,6 +100,7 @@ import openfl.events.IOErrorEvent;
 import lime.system.Clipboard;
 import psychlua.backend.ModchartSprite;
 import objects.*;
+import objects.Character;
 import states.PlayState;
 
 class HudEditorState extends MusicBeatState implements PsychUIEventHandler.PsychUIEvent
