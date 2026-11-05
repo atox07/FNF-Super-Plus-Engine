@@ -4,6 +4,7 @@ import backend.WeekData;
 import objects.Character;
 import states.MainMenuState;
 import states.FreeplayState;
+import states.editors.HudEditorState;
 
 class MasterEditorMenu extends MusicBeatState
 {
@@ -14,6 +15,7 @@ class MasterEditorMenu extends MusicBeatState
 		'character_editor',
 		'stage_editor',
 		'week_editor',
+		'hud_editor',
 		'menu_character_editor',
 		'dialogue_editor',
 		'dialogue_portrait_editor',
@@ -97,6 +99,7 @@ class MasterEditorMenu extends MusicBeatState
 			Language.getPhrase('character_editor', 'Character Editor'),
 			Language.getPhrase('stage_editor', 'Stage Editor'),
 			Language.getPhrase('week_editor', 'Week Editor'),
+			Language.getPhrase('hud_editor', 'HUD Editor'),
 			Language.getPhrase('menu_character_editor', 'Menu Character Editor'),
 			Language.getPhrase('dialogue_editor', 'Dialogue Editor'),
 			Language.getPhrase('dialogue_portrait_editor', 'Dialogue Portrait Editor'),
@@ -140,29 +143,31 @@ class MasterEditorMenu extends MusicBeatState
 				return;
 			}
 
-			switch (curSelected)
-			{
-				case 0: // Chart Editor
-					LoadingState.loadAndSwitchState(new ChartingState(), false);
-				case 1: // Character Editor
-					LoadingState.loadAndSwitchState(new CharacterEditorState(Character.DEFAULT_CHARACTER, false));
-				case 2: // Stage Editor
-					LoadingState.loadAndSwitchState(new StageEditorState());
-				case 3: // Week Editor
-					MusicBeatState.switchState(new WeekEditorState());
-				case 4: // Menu Character Editor
-					MusicBeatState.switchState(new MenuCharacterEditorState());
-				case 5: // Dialogue Editor
-					LoadingState.loadAndSwitchState(new DialogueEditorState(), false);
-				case 6: // Dialogue Portrait Editor
-					LoadingState.loadAndSwitchState(new DialogueCharacterEditorState(), false);
-				case 7: // Dialogue Pixel Editor (AVVIO NUOVO EDITOR!)
-					LoadingState.loadAndSwitchState(new DialoguePixelEditorState(), false);
-				case 8: // Note Splash Editor
-					MusicBeatState.switchState(new NoteSplashEditorState());
-				case 9: // Modchart Converter
-					MusicBeatState.switchState(new ModchartConverterState());
-			}
+switch (curSelected)
+{
+    case 0: // Chart Editor
+        LoadingState.loadAndSwitchState(new ChartingState(), false);
+    case 1: // Character Editor
+        LoadingState.loadAndSwitchState(new CharacterEditorState(Character.DEFAULT_CHARACTER, false));
+    case 2: // Stage Editor
+        LoadingState.loadAndSwitchState(new StageEditorState());
+    case 3: // Week Editor
+        MusicBeatState.switchState(new WeekEditorState());
+    case 4: // HUD Editor (NUOVO)
+        MusicBeatState.switchState(new HudEditorState());
+    case 5: // Menu Character Editor (era 4)
+        MusicBeatState.switchState(new MenuCharacterEditorState());
+    case 6: // Dialogue Editor (era 5)
+        LoadingState.loadAndSwitchState(new DialogueEditorState(), false);
+    case 7: // Dialogue Portrait Editor (era 6)
+        LoadingState.loadAndSwitchState(new DialogueCharacterEditorState(), false);
+    case 8: // Dialogue Pixel Editor (era 7)
+        LoadingState.loadAndSwitchState(new DialoguePixelEditorState(), false);
+    case 9: // Note Splash Editor (era 8)
+        MusicBeatState.switchState(new NoteSplashEditorState());
+    case 10: // Modchart Converter (era 9 — dead code, ma lo tengo pulito)
+        MusicBeatState.switchState(new ModchartConverterState());
+}
 			FlxG.sound.music.volume = 0;
 			FreeplayState.destroyFreeplayVocals();
 		}
@@ -174,14 +179,14 @@ class MasterEditorMenu extends MusicBeatState
 			if (item.targetY == 0)
 				item.alpha = canSelect(num) ? 1 : 0.35;
 
-			if (num == 8 && !canSelect(num))
+			if (num == 9 && !canSelect(num))
 			{
 				disabledTxt.visible = true;
 				disabledTxt.x = item.x;
 				disabledTxt.y = item.y + item.height + 8;
 			}
 		}
-		if (canSelect(8))
+		if (canSelect(9))
 			disabledTxt.visible = false;
 	}
 
@@ -203,7 +208,7 @@ class MasterEditorMenu extends MusicBeatState
 	}
 
 	function canSelect(index:Int):Bool
-		return index != 8 || ClientPrefs.data.noteRGB;
+         return index != 9 || ClientPrefs.data.noteRGB;
 
 	#if MODS_ALLOWED
 	function changeDirectory(change:Int = 0)
