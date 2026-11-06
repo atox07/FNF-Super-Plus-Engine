@@ -1230,6 +1230,11 @@ class ChartingState extends MusicBeatState implements PsychUIEventHandler.PsychU
 				goToPlayState();
 				return;
 			}
+			else if (FlxG.keys.justPressed.P) // P = parti da qui (eventi), SHIFT+P = anche replay degli script
+			{
+				goToPlayStateFromHere(FlxG.keys.pressed.SHIFT);
+				return;
+			}
 			else if (FlxG.keys.pressed.CONTROL
 				&& !isMovingNotes
 				&& (FlxG.keys.justPressed.Z || FlxG.keys.justPressed.Y || FlxG.keys.justPressed.X || FlxG.keys.justPressed.C || FlxG.keys.justPressed.V
@@ -6266,12 +6271,26 @@ class ChartingState extends MusicBeatState implements PsychUIEventHandler.PsychU
 
 	function goToPlayState()
 	{
+		startPlayState(false, false);
+	}
+
+	function goToPlayStateFromHere(replayScripts:Bool = false)
+	{
+		startPlayState(true, replayScripts);
+	}
+
+	function startPlayState(fromCurrentTime:Bool, replayScripts:Bool)
+	{
 		persistentUpdate = false;
 		FlxG.mouse.visible = false;
 		chartEditorSave.flush();
 
 		setSongPlaying(false);
 		updateChartData();
+
+		PlayState.startOnTime = fromCurrentTime ? Conductor.songPosition : 0;
+		PlayState.replayScriptsOnSkip = fromCurrentTime && replayScripts;
+
 		StageData.loadDirectory(PlayState.SONG);
 		LoadingState.loadAndSwitchState(new PlayState());
 		ClientPrefs.toggleVolumeKeys(true);
