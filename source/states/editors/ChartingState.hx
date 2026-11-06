@@ -649,6 +649,7 @@ class ChartingState extends MusicBeatState implements PsychUIEventHandler.PsychU
 			"F12 - Preview Chart",
 			"Enter - Playtest Chart",
 			"Space - Stop/Resume song",
+			"P (Shit-P) - Start from point",
 			"",
 			"Alt + Click - Select Note(s)",
 			"Shift + Click - Select/Unselect Note(s)",
