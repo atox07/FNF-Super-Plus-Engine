@@ -1393,11 +1393,11 @@ class HudEditorState extends MusicBeatState implements PsychUIEventHandler.Psych
 		t.fromX=a.x; t.fromY=a.y; t.toX=b.x; t.toY=b.y;
 		t.fromAlpha=a.alpha; t.toAlpha=b.alpha; t.fromAngle=a.angle; t.toAngle=b.angle;
 		t.fromScale=a.scaleX; t.toScale=b.scaleX;
-		t.propX = t.keyframes.length > 1 && t.keyframes.find(k -> differs(k.x, a.x)) != null;
-        t.propY = t.keyframes.length > 1 && t.keyframes.find(k -> differs(k.y, a.y)) != null;
-        t.propAlpha = t.keyframes.find(k -> differs(k.alpha, a.alpha)) != null;
-        t.propAngle = t.keyframes.find(k -> differs(k.angle, a.angle)) != null;
-        t.propScale = t.keyframes.find(k -> differs(k.scaleX, a.scaleX) || differs(k.scaleY, a.scaleY)) != null;
+        t.propX = t.keyframes.length > 1 && Lambda.exists(t.keyframes, k -> differs(k.x, a.x));
+        t.propY = t.keyframes.length > 1 && Lambda.exists(t.keyframes, k -> differs(k.y, a.y));
+        t.propAlpha = Lambda.exists(t.keyframes, k -> differs(k.alpha, a.alpha));
+        t.propAngle = Lambda.exists(t.keyframes, k -> differs(k.angle, a.angle));
+        t.propScale = Lambda.exists(t.keyframes, k -> differs(k.scaleX, a.scaleX) || differs(k.scaleY, a.scaleY));
 		var existing = tweenForTarget(m);
 		if (existing != null)
 		{
