@@ -1298,6 +1298,7 @@ public function startPixelDialogue(dialogueFile:PixelDialogueFile, ?onFinish:Voi
 	public var countdownSet:FlxSprite;
 	public var countdownGo:FlxSprite;
 	public static var startOnTime:Float = 0;
+	public static var replayScriptsOnSkip:Bool = false; // se true, quando parti da startOnTime vengono rieseguiti onStepHit/onBeatHit/onSectionHit saltati
 
 	function cacheCountdown()
 	{
@@ -1352,6 +1353,8 @@ public function startPixelDialogue(dialogueFile:PixelDialogueFile, ?onFinish:Voi
 			if (startOnTime > 0) {
 				clearNotesBefore(startOnTime);
 				setSongTime(startOnTime - 350);
+				if (replayScriptsOnSkip) replaySkippedScriptCallbacks(startOnTime);
+				replayScriptsOnSkip = false;
 				return true;
 			}
 			else if (skipCountdown)
@@ -1527,6 +1530,66 @@ public function startPixelDialogue(dialogueFile:PixelDialogueFile, ?onFinish:Voi
 	public function addBehindDad(obj:FlxBasic)
 	{
 		insert(members.indexOf(dadGroup), obj);
+	}
+
+	/**
+	 * Rieseguisce sugli script (Lua/HScript) i callback onStepHit / onBeatHit / onSectionHit
+	 * che sarebbero scattati tra l'inizio della canzone e `untilTime`.
+	 * Usato solo quando si parte da un punto intermedio dal chart editor (SHIFT+P).
+	 * Step e sezioni sono calcolati come in BaseMusicBeatState (BPM map + sectionBeats).
+	 */
+	function replaySkippedScriptCallbacks(untilTime:Float)
+	{
+		if (SONG == null || SONG.notes == null || SONG.notes.length < 1) return;
+
+		var savedStep:Int = curStep;
+		var savedBeat:Int = curBeat;
+		var savedSection:Int = curSection;
+
+		// step di arrivo, calcolato come in updateCurStep()
+		var lastChange = Conductor.getBPMFromSeconds(untilTime);
+		var targetStep:Int = lastChange.stepTime + Math.floor(((untilTime - ClientPrefs.data.noteOffset) - lastChange.songTime) / lastChange.stepCrochet);
+
+		var secIndex:Int = 0;
+		var stepsToDo:Int = Math.round(replayBeatsOnSection(0) * 4);
+
+		for (s in 1...targetStep + 1)
+		{
+			curStep = s;
+			curBeat = Math.floor(s / 4);
+			setOnScripts('curStep', curStep);
+
+			while (s >= stepsToDo && secIndex < SONG.notes.length - 1)
+			{
+				secIndex++;
+				stepsToDo += Math.round(replayBeatsOnSection(secIndex) * 4);
+				curSection = secIndex;
+				setOnScripts('curSection', curSection);
+				callOnScripts('onSectionHit');
+			}
+			curSection = secIndex;
+
+			if (s % 4 == 0)
+			{
+				setOnScripts('curBeat', curBeat);
+				callOnScripts('onBeatHit');
+			}
+			callOnScripts('onStepHit');
+		}
+
+		curStep = savedStep;
+		curBeat = savedBeat;
+		curSection = savedSection;
+		setOnScripts('curStep', curStep);
+		setOnScripts('curBeat', curBeat);
+		setOnScripts('curSection', curSection);
+	}
+
+	function replayBeatsOnSection(index:Int):Float
+	{
+		var sec = (index >= 0 && index < SONG.notes.length) ? SONG.notes[index] : null;
+		var beats:Null<Float> = (sec != null) ? sec.sectionBeats : null;
+		return beats == null ? 4 : beats;
 	}
 
 	public function clearNotesBefore(time:Float)
