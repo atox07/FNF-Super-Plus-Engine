@@ -6609,7 +6609,7 @@ class ChartingState extends MusicBeatState implements PsychUIEventHandler.PsychU
 		else if (midiSelData != null && midiSelData.fromAudio == true)
 		{
 			var offStr:String = (midiSplitOffset > 0 ? '+' : '') + midiSplitOffset;
-			midiWarnText.text = 'Audio follows the chart BPM. Auto split offset: $offStr semitones (LEFT / RIGHT to change).';
+			midiWarnText.text = 'Audio follows the chart BPM. Auto split border offset: $offStr semitones (LEFT / RIGHT to change).';
 			midiWarnText.color = 0xFFFFB020;
 			midiWarnText.visible = true;
 		}
@@ -7195,15 +7195,95 @@ class ChartingState extends MusicBeatState implements PsychUIEventHandler.PsychU
 				for (n in sec.sectionNotes)
 					existing.set((Std.int(n[1]) >= 4 ? 1 : 0) + '_' + Math.round(n[0]), true);
 
-		// Auto split: the median pitch of the file is the border, low notes -> Dad, high notes -> BF.
-		// Notes within 1 semitone of the border keep the side of the previous note (no ping-pong).
-		var splitThr:Float = 0;
-		var lastAutoSide:Int = 0;
+		// Auto split (only used by "Auto split"):
+		//  1) the notes are grouped in PHRASES: a pause longer than ~350 ms starts a new phrase
+		//  2) every phrase gets its mean pitch (longer notes weigh more)
+		//  3) k-means with 2 centroids on those means finds the low register (Dad) and the high one (BF),
+		//     then the whole phrase goes to the side of the closest centroid. A phrase is never split between the two.
+		// LEFT / RIGHT in the picker moves the border between the two centroids.
+		var autoSides:Array<Int> = [];
+		var phraseCount:Int = 0;
 		if (auto)
 		{
-			var ps:Array<Int> = [for (n in midi.notes) n.pitch];
-			ps.sort(function(a:Int, b:Int):Int return a - b);
-			splitThr = ps[ps.length >> 1] + midiSplitOffset;
+			var toMs:Float = fromAudio ? 1.0 : 60000 / (midi.bpm * midi.division);
+			var phStart:Array<Int> = [];
+			var phEnd:Array<Int> = []; // exclusive
+			var curStart:Int = 0;
+			var maxEnd:Int = midi.notes[0].endTick;
+			for (i in 1...midi.notes.length)
+			{
+				var nt = midi.notes[i];
+				if ((nt.tick - maxEnd) * toMs > 350)
+				{
+					phStart.push(curStart);
+					phEnd.push(i);
+					curStart = i;
+					maxEnd = nt.endTick;
+				}
+				else if (nt.endTick > maxEnd)
+					maxEnd = nt.endTick;
+			}
+			phStart.push(curStart);
+			phEnd.push(midi.notes.length);
+			phraseCount = phStart.length;
+
+			var means:Array<Float> = [];
+			for (k in 0...phraseCount)
+			{
+				var sum:Float = 0;
+				var wsum:Float = 0;
+				for (i in phStart[k]...phEnd[k])
+				{
+					var w:Float = Math.max(1, midi.notes[i].endTick - midi.notes[i].tick);
+					sum += midi.notes[i].pitch * w;
+					wsum += w;
+				}
+				means.push(sum / wsum);
+			}
+
+			var lo:Float = means[0];
+			var hi:Float = means[0];
+			for (m in means)
+			{
+				if (m < lo)
+					lo = m;
+				if (m > hi)
+					hi = m;
+			}
+			for (iter in 0...12)
+			{
+				var sl:Float = 0;
+				var cl:Int = 0;
+				var sh:Float = 0;
+				var ch:Int = 0;
+				for (m in means)
+				{
+					if (Math.abs(m - lo) <= Math.abs(m - hi))
+					{
+						sl += m;
+						cl++;
+					}
+					else
+					{
+						sh += m;
+						ch++;
+					}
+				}
+				if (cl > 0)
+					lo = sl / cl;
+				if (ch > 0)
+					hi = sh / ch;
+			}
+			var border:Float = (lo + hi) / 2 + midiSplitOffset;
+
+			for (i in 0...midi.notes.length)
+				autoSides.push(0);
+			for (k in 0...phraseCount)
+			{
+				var phSide:Int = (means[k] >= border) ? 0 : 1; // high = BF (0), low = Dad (1)
+				for (i in phStart[k]...phEnd[k])
+					autoSides[i] = phSide;
+			}
 		}
 
 		var entries:Array<{sec:Int, data:Int, time:Float, sustain:Float, side:Int}> = [];
@@ -7238,6 +7318,7 @@ class ChartingState extends MusicBeatState implements PsychUIEventHandler.PsychU
 		while (ni < midi.notes.length)
 		{
 			var n = midi.notes[ni];
+			var wi:Int = ni;
 			var nj:Int = ni + 1;
 			while (nj < midi.notes.length && midi.notes[nj].tick == n.tick)
 			{
@@ -7245,22 +7326,17 @@ class ChartingState extends MusicBeatState implements PsychUIEventHandler.PsychU
 				var cd:Int = c.endTick - c.tick;
 				var bd:Int = n.endTick - n.tick;
 				if (cd > bd || (cd == bd && c.pitch > n.pitch))
+				{
 					n = c;
+					wi = nj;
+				}
 				nj++;
 			}
 			chordsMerged += (nj - ni) - 1;
 			ni = nj;
 
 			// which side this note goes to (side 1 = Dad = lanes 4-7, side 0 = BF = lanes 0-3)
-			var noteSide:Int = side;
-			if (auto)
-			{
-				if (n.pitch >= splitThr + 1)
-					lastAutoSide = 0;
-				else if (n.pitch <= splitThr - 1)
-					lastAutoSide = 1;
-				noteSide = lastAutoSide;
-			}
+			var noteSide:Int = auto ? autoSides[wi] : side;
 
 			var candidates:Array<Int> = [];
 			for (l in 0...4)
@@ -7364,7 +7440,7 @@ class ChartingState extends MusicBeatState implements PsychUIEventHandler.PsychU
 		reloadChartAfterMidi();
 
 		midiLastResult = '$sideName: added ${entries.length} notes from $shortName'
-			+ (auto ? ' (BF ${sideCount[0]}, Dad ${sideCount[1]})' : '')
+			+ (auto ? ' (BF ${sideCount[0]}, Dad ${sideCount[1]}, $phraseCount phrases)' : '')
 			+ (duplicates > 0 ? ', $duplicates duplicates ignored' : '')
 			+ (chordsMerged > 0 ? ', $chordsMerged chord notes merged (1 arrow per row)' : '')
 			+ '.';
