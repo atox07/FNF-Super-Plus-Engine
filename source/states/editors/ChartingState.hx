@@ -6374,7 +6374,11 @@ class ChartingState extends MusicBeatState implements PsychUIEventHandler.PsychU
 	var midiBtnClear:MidiPickerButton;
 	var midiBtnCancel:MidiPickerButton;
 	var midiFileRef:openfl.net.FileReference = null;
-	var midiBrowseSide:Int = -1; // side to import to when the file dialog finishes (-1 = just select it)
+	var midiBrowseSide:Int = -1; // side to import to when the file dialog finishes (-1 = just select it). 0 = BF, 1 = Dad, 2 = auto split
+	var midiBtnAuto:MidiPickerButton;
+	var audioJob:AudioPitchJob = null; // OGG vocals being analysed (a few ms per frame so the editor does not freeze)
+	var midiPendingSide:Int = -1; // import to do as soon as the audio analysis finishes (-1 = none)
+	var midiSplitOffset:Float = 0; // semitones added to the Dad/BF split pitch (LEFT/RIGHT in the picker)
 
 	function makeMidiRect(x:Float, y:Float, w:Float, h:Float, color:FlxColor, alpha:Float = 1):FlxSprite
 	{
@@ -6423,7 +6427,7 @@ class ChartingState extends MusicBeatState implements PsychUIEventHandler.PsychU
 		midiPickerGroup.add(makeMidiRect(midiPickerX - 2, midiPickerY - 2, MIDI_PICKER_W + 4, panelH + 4, FlxColor.WHITE, 0.9));
 		midiPickerGroup.add(makeMidiRect(midiPickerX, midiPickerY, MIDI_PICKER_W, panelH, 0xFF1E1E26));
 
-		midiPickerGroup.add(makeMidiText(midiPickerX + 16, midiPickerY + 12, MIDI_PICKER_W - 32, 'Import MIDI', 20));
+		midiPickerGroup.add(makeMidiText(midiPickerX + 16, midiPickerY + 12, MIDI_PICKER_W - 32, 'Import MIDI / Vocals', 20));
 		midiSubText = makeMidiText(midiPickerX + 16, midiPickerY + 42, MIDI_PICKER_W - 32, '', 12, 0xFFB0B0B0);
 		midiPickerGroup.add(midiSubText);
 
@@ -6459,6 +6463,7 @@ class ChartingState extends MusicBeatState implements PsychUIEventHandler.PsychU
 		midiBtnDad = makeMidiButton(midiPickerX + 16, row2Y, 140, 28, 'Import as Dad');
 		midiBtnBf = makeMidiButton(midiPickerX + 164, row2Y, 140, 28, 'Import as BF');
 		midiBtnClear = makeMidiButton(midiPickerX + 312, row2Y, 120, 28, 'Clear Chart');
+		midiBtnAuto = makeMidiButton(midiPickerX + 440, row2Y, 124, 28, 'Auto split');
 		midiBtnCancel = makeMidiButton(midiPickerX + MIDI_PICKER_W - 16 - 90, row2Y, 90, 28, 'Cancel');
 
 		midiPickerGroup.visible = false;
@@ -6496,7 +6501,7 @@ class ChartingState extends MusicBeatState implements PsychUIEventHandler.PsychU
 			}
 
 			var lower:String = file.toLowerCase();
-			if (!lower.endsWith('.mid') && !lower.endsWith('.midi'))
+			if (!lower.endsWith('.mid') && !lower.endsWith('.midi') && !lower.endsWith('.ogg'))
 				continue;
 
 			found.set(prefix + file, {name: prefix + file, path: folder + file});
@@ -6515,6 +6520,8 @@ class ChartingState extends MusicBeatState implements PsychUIEventHandler.PsychU
 		midiLastResult = null;
 		midiNotice = null;
 		midiBrowseSide = -1;
+		audioJob = null;
+		midiPendingSide = -1;
 
 		// group.visible overrides every member, so show it first and let refresh hide what is not needed
 		midiPickerGroup.visible = true;
@@ -6528,6 +6535,8 @@ class ChartingState extends MusicBeatState implements PsychUIEventHandler.PsychU
 	{
 		midiPickerGroup.visible = false;
 		midiPickerOpen = false;
+		audioJob = null;
+		midiPendingSide = -1;
 
 		// The toast can't animate while the picker is open, so the summary of the imports is shown now
 		if (midiLastResult != null)
@@ -6558,7 +6567,7 @@ class ChartingState extends MusicBeatState implements PsychUIEventHandler.PsychU
 			}
 			else if (i == 0 && midiEntries.length == 0)
 			{
-				row.text = 'No MIDI files found in midi/ folders. Use "Browse..." below.';
+				row.text = 'No MIDI / OGG files found in midi/ folders. Use "Browse..." below.';
 				row.color = 0xFFFF8080;
 				row.visible = true;
 			}
@@ -6571,10 +6580,14 @@ class ChartingState extends MusicBeatState implements PsychUIEventHandler.PsychU
 		if (midiSelRect.visible)
 			midiSelRect.y = midiPickerY + 70 + selRow * MIDI_ROW_H;
 
-		midiSubText.text = 'Pick a file, then Import as Dad / BF (no selection = file dialog).   ${midiEntries.length} found.';
+		midiSubText.text = 'MIDI or OGG vocals. Import as Dad / BF, or Auto split (low = Dad, high = BF). No selection = file dialog.   ${midiEntries.length} found.';
 
 		// info line: selected file, or summary of the last import
-		if (midiSelName != null && midiSelData != null)
+		if (audioJob != null)
+			midiInfoText.text = 'Analysing $midiSelName ...';
+		else if (midiSelName != null && midiSelData != null && midiSelData.fromAudio == true)
+			midiInfoText.text = 'Selected: $midiSelName   (audio, ${midiSelData.notes.length} notes detected)';
+		else if (midiSelName != null && midiSelData != null)
 		{
 			var bpmStr:String = Std.string(Math.round(midiSelData.bpm * 100) / 100);
 			midiInfoText.text = 'Selected: $midiSelName   ($bpmStr BPM, ${midiSelData.notes.length} notes)';
@@ -6591,6 +6604,13 @@ class ChartingState extends MusicBeatState implements PsychUIEventHandler.PsychU
 		{
 			midiWarnText.text = '[!] $midiSelError';
 			midiWarnText.color = 0xFFFF6060;
+			midiWarnText.visible = true;
+		}
+		else if (midiSelData != null && midiSelData.fromAudio == true)
+		{
+			var offStr:String = (midiSplitOffset > 0 ? '+' : '') + midiSplitOffset;
+			midiWarnText.text = 'Audio follows the chart BPM. Auto split offset: $offStr semitones (LEFT / RIGHT to change).';
+			midiWarnText.color = 0xFFFFB020;
 			midiWarnText.visible = true;
 		}
 		else if (midiSelData != null)
@@ -6654,8 +6674,16 @@ class ChartingState extends MusicBeatState implements PsychUIEventHandler.PsychU
 		midiSelName = name;
 		midiSelData = null;
 		midiSelError = null;
+		audioJob = null;
+		midiPendingSide = -1;
 		try
 		{
+			if (bytes.length > 4 && bytes.getString(0, 4) == 'OggS')
+			{
+				startAudioJob(name, bytes);
+				refreshMidiPicker();
+				return;
+			}
 			midiSelData = parseMidi(bytes);
 			if (midiSelData.notes.length < 1)
 			{
@@ -6675,6 +6703,12 @@ class ChartingState extends MusicBeatState implements PsychUIEventHandler.PsychU
 	// uses the selected file, or opens the file dialog when nothing is selected.
 	function importMidiAs(side:Int)
 	{
+		if (audioJob != null)
+		{
+			midiPendingSide = side; // still analysing: it is imported as soon as it is done
+			return;
+		}
+
 		if (midiSelData != null)
 		{
 			var data:MidiData = midiSelData;
@@ -6698,6 +6732,15 @@ class ChartingState extends MusicBeatState implements PsychUIEventHandler.PsychU
 		{
 			closeMidiPicker();
 			return;
+		}
+
+		if (audioJob != null)
+			stepAudioJob();
+
+		if (FlxG.keys.justPressed.LEFT || FlxG.keys.justPressed.RIGHT)
+		{
+			midiSplitOffset = FlxMath.bound(midiSplitOffset + (FlxG.keys.justPressed.LEFT ? -1 : 1), -24, 24);
+			refreshMidiPicker();
 		}
 
 		var oldScroll:Int = midiScroll;
@@ -6724,7 +6767,7 @@ class ChartingState extends MusicBeatState implements PsychUIEventHandler.PsychU
 
 		// footer buttons
 		var buttons:Array<MidiPickerButton> = [
-			midiBtnBrowse, midiBtnPrev, midiBtnNext, midiBtnDad, midiBtnBf, midiBtnClear, midiBtnCancel
+			midiBtnBrowse, midiBtnPrev, midiBtnNext, midiBtnDad, midiBtnBf, midiBtnAuto, midiBtnClear, midiBtnCancel
 		];
 		var hoverBtn:MidiPickerButton = null;
 		for (b in buttons)
@@ -6749,6 +6792,8 @@ class ChartingState extends MusicBeatState implements PsychUIEventHandler.PsychU
 				importMidiAs(1);
 			else if (hoverBtn == midiBtnBf)
 				importMidiAs(0);
+			else if (hoverBtn == midiBtnAuto)
+				importMidiAs(2);
 			else if (hoverBtn == midiBtnClear)
 				clearChartNotes();
 			else if (hoverBtn == midiBtnCancel)
@@ -6798,7 +6843,7 @@ class ChartingState extends MusicBeatState implements PsychUIEventHandler.PsychU
 		midiFileRef.addEventListener(openfl.events.Event.CANCEL, onMidiBrowseCancel);
 		try
 		{
-			midiFileRef.browse([new openfl.net.FileFilter('MIDI files (*.mid, *.midi)', '*.mid;*.midi')]);
+			midiFileRef.browse([new openfl.net.FileFilter('MIDI / OGG vocals (*.mid, *.midi, *.ogg)', '*.mid;*.midi;*.ogg')]);
 		}
 		catch (e:Dynamic)
 		{
@@ -6865,6 +6910,8 @@ class ChartingState extends MusicBeatState implements PsychUIEventHandler.PsychU
 			selectMidiBytes(name, -1, bytes);
 			if (midiSelData != null)
 				importMidiAs(side);
+			else if (audioJob != null)
+				midiPendingSide = side;
 		}
 		else
 			selectMidiBytes(name + ' (browsed)', -1, bytes);
@@ -7095,14 +7142,16 @@ class ChartingState extends MusicBeatState implements PsychUIEventHandler.PsychU
 	}
 
 	/**
-	 * Adds the notes of a MIDI to the chart that is already open (nothing is replaced).
-	 * side 1 = Dad -> lanes 4-7, side 0 = BF -> lanes 0-3. The lane is random (1 arrow per row, see below).
+	 * Adds the notes of a MIDI (or of analysed OGG vocals) to the chart that is already open (nothing is replaced).
+	 * side 1 = Dad -> lanes 4-7, side 0 = BF -> lanes 0-3, side 2 = auto split (low notes = Dad, high notes = BF).
+	 * The lane is random (1 arrow per row, see below).
 	 * Both MIDIs start at tick 0, so they line up with each other (no extra offset on either).
 	 */
 	function addMidiNotes(midi:MidiData, name:String, side:Int)
 	{
-		var sideName:String = (side == 1) ? 'Dad' : 'BF';
-		var laneBase:Int = (side == 1) ? 4 : 0;
+		var auto:Bool = (side == 2);
+		var fromAudio:Bool = (midi.fromAudio == true);
+		var sideName:String = auto ? 'Vocals' : ((side == 1) ? 'Dad' : 'BF');
 		var shortName:String = (name.length > 28) ? '...' + name.substr(name.length - 25) : name;
 
 		var chartHasNotes:Bool = false;
@@ -7113,14 +7162,20 @@ class ChartingState extends MusicBeatState implements PsychUIEventHandler.PsychU
 				break;
 			}
 
-		// BPM: the first MIDI imported into an empty chart sets it, the following ones follow the chart BPM
+		// BPM: the first MIDI imported into an empty chart sets it, the following ones follow the chart BPM.
+		// Audio has no BPM of its own: it always follows the chart BPM.
 		var notices:Array<String> = [];
 		if (midi.tempoChanges)
 			notices.push('[!] This MIDI contains BPM changes. You may need to adjust the chart manually.');
 
 		var bpm:Float;
 		var setBpm:Bool = false;
-		if (!chartHasNotes)
+		if (fromAudio)
+		{
+			bpm = PlayState.SONG.bpm;
+			notices.push('[!] Audio notes are snapped to the chart BPM (${Math.round(bpm * 100) / 100}). Set the right BPM before importing.');
+		}
+		else if (!chartHasNotes)
 		{
 			bpm = FlxMath.bound(Math.round(midi.bpm * 1000) / 1000, 1, MAX_EDITOR_BPM);
 			setBpm = true;
@@ -7133,17 +7188,30 @@ class ChartingState extends MusicBeatState implements PsychUIEventHandler.PsychU
 		}
 		var stepMs:Float = Conductor.calculateCrochet(bpm) / 4;
 
-		// notes already in the chart (so importing the same file twice does not stack notes)
+		// notes already in the chart, per side + time (so importing the same file twice does not stack notes)
 		var existing:Map<String, Bool> = new Map();
 		for (sec in PlayState.SONG.notes)
 			if (sec.sectionNotes != null)
 				for (n in sec.sectionNotes)
-					existing.set((Std.int(n[1]) >= 4 ? 1 : 0) + '_' + Math.round(n[0]), true); // per side + time (lane is random now)
+					existing.set((Std.int(n[1]) >= 4 ? 1 : 0) + '_' + Math.round(n[0]), true);
 
-		var entries:Array<{sec:Int, data:Int, time:Float, sustain:Float}> = [];
+		// Auto split: the median pitch of the file is the border, low notes -> Dad, high notes -> BF.
+		// Notes within 1 semitone of the border keep the side of the previous note (no ping-pong).
+		var splitThr:Float = 0;
+		var lastAutoSide:Int = 0;
+		if (auto)
+		{
+			var ps:Array<Int> = [for (n in midi.notes) n.pitch];
+			ps.sort(function(a:Int, b:Int):Int return a - b);
+			splitThr = ps[ps.length >> 1] + midiSplitOffset;
+		}
+
+		var entries:Array<{sec:Int, data:Int, time:Float, sustain:Float, side:Int}> = [];
 		var seen:Map<String, Bool> = new Map();
 		var maxSec:Int = 0;
 		var duplicates:Int = 0;
+		var sideCount:Array<Int> = [0, 0];
+
 		// Random lanes (the pitch no longer decides the arrow), but:
 		//  - only ONE arrow per row: if the MIDI has a chord, the longest (then the highest) note is kept
 		//  - the same arrow is never used more than 2 times in a row
@@ -7156,8 +7224,8 @@ class ChartingState extends MusicBeatState implements PsychUIEventHandler.PsychU
 			rngState = (rngState * 1103515245 + 12345) & 0x3FFFFFFF;
 			return (rngState >> 8) % max;
 		};
-		var lastLane:Int = -1;
-		var sameCount:Int = 0;
+		var lastLane:Array<Int> = [-1, -1];
+		var sameCount:Array<Int> = [0, 0];
 		var chordsMerged:Int = 0;
 
 		var ni:Int = 0;
@@ -7177,25 +7245,47 @@ class ChartingState extends MusicBeatState implements PsychUIEventHandler.PsychU
 			chordsMerged += (nj - ni) - 1;
 			ni = nj;
 
-			var candidates:Array<Int> = [];
-			for (l in 0...4)
-				if (!(sameCount >= 2 && l == lastLane))
-					candidates.push(l);
-			var lane:Int = candidates[nextRand(candidates.length)];
-			if (lane == lastLane)
-				sameCount++;
-			else
+			// which side this note goes to (side 1 = Dad = lanes 4-7, side 0 = BF = lanes 0-3)
+			var noteSide:Int = side;
+			if (auto)
 			{
-				lastLane = lane;
-				sameCount = 1;
+				if (n.pitch >= splitThr + 1)
+					lastAutoSide = 0;
+				else if (n.pitch <= splitThr - 1)
+					lastAutoSide = 1;
+				noteSide = lastAutoSide;
 			}
 
-			var data:Int = lane + laneBase;
-			var step:Float = n.tick / midi.division * 4;
+			var candidates:Array<Int> = [];
+			for (l in 0...4)
+				if (!(sameCount[noteSide] >= 2 && l == lastLane[noteSide]))
+					candidates.push(l);
+			var lane:Int = candidates[nextRand(candidates.length)];
+			if (lane == lastLane[noteSide])
+				sameCount[noteSide]++;
+			else
+			{
+				lastLane[noteSide] = lane;
+				sameCount[noteSide] = 1;
+			}
+
+			var data:Int = lane + ((noteSide == 1) ? 4 : 0);
+			var step:Float;
+			var durSteps:Float;
+			if (fromAudio) // ticks are milliseconds: snap to the nearest step of the chart
+			{
+				step = Math.round(n.tick / stepMs);
+				durSteps = (n.endTick - n.tick) / stepMs - 1; // leave a step of air before the next note
+			}
+			else
+			{
+				step = n.tick / midi.division * 4;
+				durSteps = (n.endTick - n.tick) / midi.division * 4;
+			}
 			var time:Float = step * stepMs;
 
-			var key:String = side + '_' + n.tick;
-			if (seen.exists(key) || existing.exists(side + '_' + Math.round(time))) // already a note on this row
+			var key:String = noteSide + '_' + Math.round(time);
+			if (seen.exists(key) || existing.exists(key)) // already a note on this row
 			{
 				duplicates++;
 				continue;
@@ -7203,13 +7293,14 @@ class ChartingState extends MusicBeatState implements PsychUIEventHandler.PsychU
 			seen.set(key, true);
 
 			var sec:Int = Std.int(step / 16);
-			var durSteps:Float = (n.endTick - n.tick) / midi.division * 4;
 			entries.push({
 				sec: sec,
 				data: data,
 				time: time,
-				sustain: (durSteps >= MIDI_SUSTAIN_MIN_STEPS) ? durSteps * stepMs : 0
+				sustain: (durSteps >= MIDI_SUSTAIN_MIN_STEPS) ? durSteps * stepMs : 0,
+				side: noteSide
 			});
+			sideCount[noteSide]++;
 			if (sec > maxSec)
 				maxSec = sec;
 		}
@@ -7232,12 +7323,15 @@ class ChartingState extends MusicBeatState implements PsychUIEventHandler.PsychU
 			songNotes.push(ChartEditorTiming.createBlankSection(bpm, lastMustHit));
 
 		var touched:Map<Int, Bool> = new Map();
+		var touchedBf:Map<Int, Bool> = new Map();
 		for (e in entries)
 		{
 			if (songNotes[e.sec].sectionNotes == null)
 				songNotes[e.sec].sectionNotes = [];
 			songNotes[e.sec].sectionNotes.push([e.time, e.data, e.sustain]);
 			touched.set(e.sec, true);
+			if (e.side == 0)
+				touchedBf.set(e.sec, true);
 		}
 
 		// mustHitSection (camera): BF notes in a section -> true. Dad notes -> false, unless BF also plays there.
@@ -7245,7 +7339,7 @@ class ChartingState extends MusicBeatState implements PsychUIEventHandler.PsychU
 		for (secNum in touched.keys())
 		{
 			var section = songNotes[secNum];
-			if (side == 0)
+			if (touchedBf.exists(secNum))
 				section.mustHitSection = true;
 			else
 			{
@@ -7264,11 +7358,325 @@ class ChartingState extends MusicBeatState implements PsychUIEventHandler.PsychU
 		reloadChartAfterMidi();
 
 		midiLastResult = '$sideName: added ${entries.length} notes from $shortName'
+			+ (auto ? ' (BF ${sideCount[0]}, Dad ${sideCount[1]})' : '')
 			+ (duplicates > 0 ? ', $duplicates duplicates ignored' : '')
 			+ (chordsMerged > 0 ? ', $chordsMerged chord notes merged (1 arrow per row)' : '')
 			+ '.';
 		midiNotice = (notices.length > 0) ? notices.join('\n') : null;
 		refreshMidiPicker();
+	}
+
+	// ---------------------------------------------------------------
+	// OGG vocals -> notes (pitch detection, YIN)
+	// ---------------------------------------------------------------
+	// The OGG is decoded and reduced to mono ~8 kHz. Then, every 20 ms, the pitch of a 32 ms window is measured.
+	// Frames are processed a few milliseconds per editor frame, so the editor does not freeze.
+	// The result is a MidiData (fromAudio = true) that goes through addMidiNotes like any MIDI.
+	function startAudioJob(name:String, bytes:Bytes)
+	{
+		#if (lime_cffi && !macro)
+		var buffer:AudioBuffer = null;
+		try
+		{
+			buffer = AudioBuffer.fromBytes(bytes);
+		}
+		catch (e:Dynamic)
+		{
+			buffer = null;
+		}
+		if (buffer == null || buffer.data == null)
+			throw 'Could not decode this OGG file.';
+		if (buffer.bitsPerSample != 16)
+			throw 'Unsupported audio format (${buffer.bitsPerSample}-bit).';
+
+		var channels:Int = Std.int(Math.max(1, buffer.channels));
+		var raw:Bytes = buffer.data.toBytes();
+		var frames:Int = Std.int(raw.length / (channels * 2));
+		var factor:Int = Std.int(Math.max(1, Math.round(buffer.sampleRate / 8000)));
+		var sr:Float = buffer.sampleRate / factor;
+		var count:Int = Std.int(frames / factor);
+
+		var mono:haxe.ds.Vector<Float> = new haxe.ds.Vector<Float>(count);
+		for (i in 0...count)
+		{
+			var acc:Float = 0;
+			for (k in 0...factor)
+			{
+				var pos:Int = (i * factor + k) * channels * 2;
+				for (c in 0...channels)
+				{
+					var v:Int = raw.getUInt16(pos + c * 2);
+					if (v >= 32768)
+						v -= 65536;
+					acc += v;
+				}
+			}
+			mono[i] = acc / (factor * channels * 32768);
+		}
+
+		var win:Int = 256;
+		var hop:Int = Std.int(Math.max(1, Math.round(sr * 0.02)));
+		var tauMin:Int = Std.int(Math.max(2, Math.floor(sr / 900)));
+		var tauMax:Int = Std.int(Math.min(win - 1, Math.ceil(sr / 70)));
+		var total:Int = Std.int((count - win - tauMax) / hop);
+		if (total < 8)
+			throw 'This audio is too short.';
+
+		var rms:Array<Float> = [];
+		var maxRms:Float = 0;
+		for (i in 0...total)
+		{
+			var start:Int = i * hop;
+			var sum:Float = 0;
+			for (j in 0...win)
+				sum += mono[start + j] * mono[start + j];
+			var r:Float = Math.sqrt(sum / win);
+			rms.push(r);
+			if (r > maxRms)
+				maxRms = r;
+		}
+		if (maxRms < 0.001)
+			throw 'This audio is silent.';
+
+		audioJob = {
+			name: name,
+			samples: mono,
+			sr: sr,
+			win: win,
+			hop: hop,
+			tauMin: tauMin,
+			tauMax: tauMax,
+			total: total,
+			frame: 0,
+			pitch: [for (i in 0...total) -1.0],
+			rms: rms,
+			gate: maxRms * 0.05,
+			cm: new haxe.ds.Vector<Float>(tauMax + 2)
+		};
+		#else
+		throw 'Audio import is not supported on this platform.';
+		#end
+	}
+
+	function stepAudioJob()
+	{
+		var job:AudioPitchJob = audioJob;
+		if (job == null)
+			return;
+
+		var t0:Float = haxe.Timer.stamp();
+		while (job.frame < job.total)
+		{
+			var i:Int = job.frame;
+			job.frame++;
+			if (job.rms[i] >= job.gate)
+				job.pitch[i] = yinFrame(job, i * job.hop);
+			if ((job.frame & 15) == 0 && haxe.Timer.stamp() - t0 > 0.008)
+				break;
+		}
+
+		if (job.frame < job.total)
+		{
+			midiInfoText.text = 'Analysing ${job.name} ...  ${Math.floor(job.frame / job.total * 100)}%';
+			return;
+		}
+
+		// done
+		var name:String = job.name;
+		var pending:Int = midiPendingSide;
+		audioJob = null;
+		midiPendingSide = -1;
+
+		var notes:Array<MidiNoteEvent> = audioFramesToNotes(job);
+		if (notes.length < 1)
+		{
+			midiSelData = null;
+			midiSelError = 'No notes detected in this audio (too quiet, or no clear voice).';
+			refreshMidiPicker();
+			return;
+		}
+
+		midiSelData = {
+			division: 1000,
+			bpm: 120,
+			tempoChanges: false,
+			notes: notes,
+			fromAudio: true
+		};
+		midiSelError = null;
+		refreshMidiPicker();
+
+		if (pending >= 0)
+			importMidiAs(pending);
+	}
+
+	// YIN pitch detection of one window. Returns a MIDI pitch (float) or -1 when there is no clear pitch.
+	function yinFrame(job:AudioPitchJob, start:Int):Float
+	{
+		var x:haxe.ds.Vector<Float> = job.samples;
+		var cm:haxe.ds.Vector<Float> = job.cm;
+		var win:Int = job.win;
+		var tauMax:Int = job.tauMax;
+
+		var running:Float = 0;
+		var best:Int = -1;
+		var bestV:Float = 10;
+		var minT:Int = -1;
+		var minV:Float = 10;
+		var computed:Int = 0;
+
+		for (t in 1...tauMax + 1)
+		{
+			var d:Float = 0;
+			for (j in 0...win)
+			{
+				var df:Float = x[start + j] - x[start + j + t];
+				d += df * df;
+			}
+			running += d;
+			var c:Float = (running > 0) ? d * t / running : 1;
+			cm[t] = c;
+			computed = t;
+
+			if (t >= job.tauMin)
+			{
+				if (best < 0)
+				{
+					if (c < 0.15)
+					{
+						best = t;
+						bestV = c;
+					}
+					else if (c < minV)
+					{
+						minV = c;
+						minT = t;
+					}
+				}
+				else if (c < bestV)
+				{
+					best = t;
+					bestV = c;
+				}
+				else
+					break;
+			}
+		}
+
+		if (best < 0)
+		{
+			if (minV < 0.25)
+				best = minT;
+			else
+				return -1;
+		}
+
+		// parabolic interpolation around the minimum
+		var tau:Float = best;
+		if (best > 1 && best + 1 <= computed)
+		{
+			var a:Float = cm[best - 1];
+			var b:Float = cm[best];
+			var cc:Float = cm[best + 1];
+			var den:Float = a - 2 * b + cc;
+			if (Math.abs(den) > 1e-9)
+				tau = best + 0.5 * (a - cc) / den;
+		}
+		var freq:Float = job.sr / tau;
+		if (freq < 60 || freq > 1100)
+			return -1;
+		return 69 + 12 * Math.log(freq / 440) / Math.log(2);
+	}
+
+	// Frames of pitch -> notes: pitch smoothing, a new note when the pitch jumps or the voice re-attacks,
+	// pauses split notes, and anything shorter than 80 ms is dropped. Ticks are milliseconds.
+	function audioFramesToNotes(job:AudioPitchJob):Array<MidiNoteEvent>
+	{
+		var total:Int = job.total;
+		var cmp = function(a:Float, b:Float):Int return a < b ? -1 : (a > b ? 1 : 0);
+
+		// median filter (5 frames) on the voiced frames
+		var pm:Array<Float> = [for (i in 0...total) -1.0];
+		for (i in 0...total)
+		{
+			if (job.pitch[i] < 0)
+				continue;
+			var win:Array<Float> = [];
+			for (k in -2...3)
+				if (i + k >= 0 && i + k < total && job.pitch[i + k] >= 0)
+					win.push(job.pitch[i + k]);
+			win.sort(cmp);
+			pm[i] = win[win.length >> 1];
+		}
+
+		var frameMs = function(f:Int):Float return (f * job.hop + job.win / 2) / job.sr * 1000;
+
+		var notes:Array<MidiNoteEvent> = [];
+		var st:{start:Int, last:Int, gap:Int, ref:Float, ps:Array<Float>} = {
+			start: -1,
+			last: -1,
+			gap: 0,
+			ref: 0,
+			ps: []
+		};
+
+		var closeNote = function()
+		{
+			if (st.start >= 0 && st.ps.length >= 4)
+			{
+				var sorted:Array<Float> = st.ps.copy();
+				sorted.sort(cmp);
+				notes.push({
+					tick: Math.round(frameMs(st.start)),
+					endTick: Math.round(frameMs(st.last + 1)),
+					channel: 0,
+					pitch: Math.round(sorted[sorted.length >> 1])
+				});
+			}
+			st.start = -1;
+			st.last = -1;
+			st.gap = 0;
+			st.ps = [];
+		};
+
+		for (i in 0...total)
+		{
+			var p:Float = pm[i];
+			if (p >= 0)
+			{
+				if (st.start >= 0)
+				{
+					var onset:Bool = false;
+					if (i - st.start >= 6 && i >= 4 && job.rms[i] > job.gate * 1.6)
+					{
+						var minRecent:Float = Math.min(Math.min(job.rms[i - 1], job.rms[i - 2]), Math.min(job.rms[i - 3], job.rms[i - 4]));
+						onset = job.rms[i] > minRecent * 1.9;
+					}
+					if (Math.abs(p - st.ref) >= 1.3 || onset)
+						closeNote();
+				}
+
+				if (st.start < 0)
+				{
+					st.start = i;
+					st.ref = p;
+				}
+				else
+					st.ref = st.ref * 0.75 + p * 0.25;
+
+				st.ps.push(p);
+				st.last = i;
+				st.gap = 0;
+			}
+			else if (st.start >= 0)
+			{
+				st.gap++;
+				if (st.gap > 3) // more than ~60 ms without a voice: the note is over
+					closeNote();
+			}
+		}
+		closeNote();
+		return notes;
 	}
 
 	#if desktop
@@ -7972,6 +8380,24 @@ typedef MidiData =
 	var bpm:Float; // first Set Tempo found (120 if none)
 	var tempoChanges:Bool; // true if the file has Set Tempo events with a different BPM
 	var notes:Array<MidiNoteEvent>;
+	@:optional var fromAudio:Bool; // true = notes come from OGG vocals: tick / endTick are in milliseconds
+}
+
+typedef AudioPitchJob =
+{
+	var name:String;
+	var samples:haxe.ds.Vector<Float>; // mono, ~8 kHz
+	var sr:Float;
+	var win:Int;
+	var hop:Int;
+	var tauMin:Int;
+	var tauMax:Int;
+	var total:Int;
+	var frame:Int;
+	var pitch:Array<Float>; // MIDI pitch per frame, -1 = no pitch
+	var rms:Array<Float>;
+	var gate:Float;
+	var cm:haxe.ds.Vector<Float>;
 }
 
 typedef MidiPickerButton =
