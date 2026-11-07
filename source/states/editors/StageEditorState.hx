@@ -203,17 +203,19 @@ class StageEditorState extends MusicBeatState implements PsychUIEventHandler.Psy
 		#if sys
 		if (stageJson.objects == null || stageJson.objects.length < 1)
 		{
-			var luaPath:String = Paths.getPath('stages/' + lastLoadedStage + '.lua', TEXT, null, true);
+			var luaPath:String = findStageLua(lastLoadedStage);
 			if (luaPath != null && FileSystem.exists(luaPath))
 			{
 				var fromLua:Array<Dynamic> = loadStageLuaObjects(luaPath);
+				if (fromLua.length < 1)
+					fromLua = parsePlainStageLua(luaPath); // hand-written Lua, no --@editor-meta
 				if (fromLua.length > 0)
 				{
 					stageJson.objects = fromLua;
 					showOutput('Loaded ${fromLua.length} object(s) from Lua.');
 				}
 				else
-					showOutput('Lua found but no --@objects block; stage is not editable.', true);
+					showOutput('Lua found but no sprites could be read from it.', true);
 			}
 		}
 		#end
@@ -728,6 +730,65 @@ class StageEditorState extends MusicBeatState implements PsychUIEventHandler.Psy
 	// PNG picker: reads mods/images (and subfolders), PNG only or PNG + XML
 	// ---------------------------------------------------------------
 	static inline var PNG_DIR:String = 'mods/images/';
+
+	// Every "images" folder that exists: mods/images, mods/<mod>/images, assets/images, assets/<folder>/images
+	// (subfolders are scanned recursively by scanPngFolder). The current mod comes first.
+	public static function getImageRoots():Array<String>
+	{
+		var roots:Array<String> = [];
+		#if sys
+		function addRoot(r:String)
+		{
+			if (!roots.contains(r) && FileSystem.exists(r) && FileSystem.isDirectory(r))
+				roots.push(r);
+		}
+
+		#if MODS_ALLOWED
+		if (Mods.currentModDirectory != null && Mods.currentModDirectory.length > 0)
+			addRoot('mods/' + Mods.currentModDirectory + '/images/');
+		addRoot('mods/images/');
+		try
+		{
+			if (FileSystem.exists('mods') && FileSystem.isDirectory('mods'))
+				for (folder in FileSystem.readDirectory('mods'))
+					if (FileSystem.isDirectory('mods/' + folder))
+						addRoot('mods/' + folder + '/images/');
+		}
+		catch (e:Dynamic) {}
+		#end
+
+		addRoot('assets/shared/images/');
+		addRoot('assets/images/');
+		try
+		{
+			if (FileSystem.exists('assets') && FileSystem.isDirectory('assets'))
+				for (folder in FileSystem.readDirectory('assets'))
+					if (FileSystem.isDirectory('assets/' + folder))
+						addRoot('assets/' + folder + '/images/');
+		}
+		catch (e:Dynamic) {}
+		#end
+		return roots;
+	}
+
+	// Finds "<root>/<name>.<ext>" in any images folder. Returns the full path or null.
+	public static function findImageFile(name:String, ext:String = 'png'):String
+	{
+		#if sys
+		if (name == null || name.length < 1)
+			return null;
+		name = name.replace('\\', '/');
+		if (name.startsWith('/'))
+			name = name.substr(1);
+		for (root in getImageRoots())
+		{
+			var f:String = root + name + '.' + ext;
+			if (FileSystem.exists(f))
+				return f;
+		}
+		#end
+		return null;
+	}
 	static inline var PNG_PICKER_W:Int = 560;
 	static inline var PNG_ROWS:Int = 16;
 	static inline var PNG_ROW_H:Int = 20;
@@ -763,8 +824,10 @@ class StageEditorState extends MusicBeatState implements PsychUIEventHandler.Psy
 		return t;
 	}
 
-	function scanPngFolder(folder:String, prefix:String, found:Array<PngEntry>, depth:Int)
+	function scanPngFolder(folder:String, prefix:String, found:Array<PngEntry>, depth:Int, rootDir:String = null)
 	{
+		if (rootDir == null)
+			rootDir = folder;
 		#if sys
 		if (depth > 8 || !FileSystem.exists(folder) || !FileSystem.isDirectory(folder))
 			return;
@@ -774,7 +837,7 @@ class StageEditorState extends MusicBeatState implements PsychUIEventHandler.Psy
 			var full:String = folder + file;
 			if (FileSystem.isDirectory(full))
 			{
-				scanPngFolder(full + '/', prefix + file + '/', found, depth + 1);
+				scanPngFolder(full + '/', prefix + file + '/', found, depth + 1, rootDir);
 				continue;
 			}
 
@@ -782,7 +845,7 @@ class StageEditorState extends MusicBeatState implements PsychUIEventHandler.Psy
 				continue;
 
 			var baseName:String = file.substr(0, file.length - 4);
-			found.push({name: prefix + baseName, hasXml: FileSystem.exists(folder + baseName + '.xml')});
+			found.push({name: prefix + baseName, hasXml: FileSystem.exists(folder + baseName + '.xml'), root: rootDir});
 		}
 		#end
 	}
@@ -790,7 +853,18 @@ class StageEditorState extends MusicBeatState implements PsychUIEventHandler.Psy
 	function openPngPicker()
 	{
 		pngEntries = [];
-		scanPngFolder(PNG_DIR, '', pngEntries, 0);
+		var seen:Map<String, Bool> = [];
+		for (root in getImageRoots())
+		{
+			var tmp:Array<PngEntry> = [];
+			scanPngFolder(root, '', tmp, 0, root);
+			for (e in tmp)
+				if (!seen.exists(e.name))
+				{
+					seen.set(e.name, true);
+					pngEntries.push(e);
+				}
+		}
 		pngEntries.sort(function(a:PngEntry, b:PngEntry):Int
 		{
 			var ak:String = a.name.toLowerCase();
@@ -802,7 +876,7 @@ class StageEditorState extends MusicBeatState implements PsychUIEventHandler.Psy
 		if (pngPickerGroup == null)
 			buildPngPicker();
 
-		pngInfoText.text = (pngEntries.length > 0) ? '${pngEntries.length} PNG in $PNG_DIR' : 'No PNG found in $PNG_DIR';
+		pngInfoText.text = (pngEntries.length > 0) ? '${pngEntries.length} PNG (mods + assets, all subfolders)' : 'No PNG found in mods/ or assets/';
 		refreshPngRows();
 		pngPickerGroup.visible = pngPickerGroup.active = pngPickerOpen = true;
 	}
@@ -975,7 +1049,7 @@ class StageEditorState extends MusicBeatState implements PsychUIEventHandler.Psy
 
 	function importPngEntry(entry:PngEntry)
 	{
-		var anims:Array<AnimArray> = entry.hasXml ? readXmlAnimations('$PNG_DIR${entry.name}.xml') : [];
+		var anims:Array<AnimArray> = entry.hasXml ? readXmlAnimations(entry.root + entry.name + '.xml') : [];
 		var type:String = (anims.length > 0) ? 'animatedSprite' : 'sprite';
 		var baseName:String = entry.name.substring(entry.name.lastIndexOf('/') + 1);
 
@@ -2475,6 +2549,329 @@ class StageEditorState extends MusicBeatState implements PsychUIEventHandler.Psy
 		stageJson.objects = hardcodedPreview ? originalJsonObjects.copy() : collectObjects();
 	}
 
+
+	// Loads an image straight from disk (any images folder in mods/ or assets/) when Paths.image can't find it.
+	public static function loadImageFromDisk(spr:FlxSprite, name:String, animated:Bool):Bool
+	{
+		#if sys
+		try
+		{
+			var png:String = findImageFile(name);
+			if (png == null)
+				return false;
+
+			var key:String = 'stageeditor_disk:' + png;
+			var graphic:flixel.graphics.FlxGraphic = FlxG.bitmap.get(key);
+			if (graphic == null)
+				graphic = FlxG.bitmap.add(openfl.display.BitmapData.fromFile(png), false, key);
+			if (graphic == null)
+				return false;
+			graphic.persist = true;
+
+			if (animated)
+			{
+				var base:String = png.substr(0, png.length - 4);
+				var frames:flixel.graphics.frames.FlxAtlasFrames = null;
+				if (FileSystem.exists(base + '.xml'))
+					frames = flixel.graphics.frames.FlxAtlasFrames.fromSparrow(graphic, File.getContent(base + '.xml'));
+				else if (FileSystem.exists(base + '.txt'))
+					frames = flixel.graphics.frames.FlxAtlasFrames.fromSpriteSheetPacker(graphic, File.getContent(base + '.txt'));
+				else if (FileSystem.exists(base + '.json'))
+					frames = flixel.graphics.frames.FlxAtlasFrames.fromAseprite(graphic, File.getContent(base + '.json'));
+				if (frames == null)
+					return false;
+				spr.frames = frames;
+			}
+			else
+				spr.loadGraphic(graphic);
+			return true;
+		}
+		catch (e:Dynamic)
+		{
+			trace('Could not load "$name" from disk: $e');
+		}
+		#end
+		return false;
+	}
+
+	// Finds stages/<name>.lua in the current mod, any mod, or any assets folder.
+	function findStageLua(stageName:String):String
+	{
+		#if sys
+		var cands:Array<String> = [];
+		var viaPaths:String = null;
+		try
+		{
+			viaPaths = Paths.getPath('stages/' + stageName + '.lua', TEXT, null, true);
+		}
+		catch (e:Dynamic) {}
+		if (viaPaths != null)
+			cands.push(viaPaths);
+
+		#if MODS_ALLOWED
+		if (Mods.currentModDirectory != null && Mods.currentModDirectory.length > 0)
+			cands.push('mods/' + Mods.currentModDirectory + '/stages/' + stageName + '.lua');
+		cands.push('mods/stages/' + stageName + '.lua');
+		try
+		{
+			if (FileSystem.exists('mods') && FileSystem.isDirectory('mods'))
+				for (f in FileSystem.readDirectory('mods'))
+					cands.push('mods/' + f + '/stages/' + stageName + '.lua');
+		}
+		catch (e:Dynamic) {}
+		#end
+
+		cands.push('assets/shared/stages/' + stageName + '.lua');
+		cands.push('assets/stages/' + stageName + '.lua');
+		try
+		{
+			if (FileSystem.exists('assets') && FileSystem.isDirectory('assets'))
+				for (f in FileSystem.readDirectory('assets'))
+					cands.push('assets/' + f + '/stages/' + stageName + '.lua');
+		}
+		catch (e:Dynamic) {}
+
+		for (c in cands)
+			if (c != null && FileSystem.exists(c))
+				return c;
+		#end
+		return null;
+	}
+
+	// Splits the arguments of the first "fn(...)" call found in a Lua line. Returns null if the line has no such call.
+	function luaCallArgs(line:String, fn:String):Array<String>
+	{
+		var idx:Int = line.indexOf(fn + '(');
+		if (idx < 0)
+			return null;
+		if (idx > 0)
+		{
+			var prev:String = line.charAt(idx - 1);
+			if (~/[A-Za-z0-9_]/.match(prev))
+				return null; // part of a longer name (e.g. "xmakeLuaSprite")
+		}
+		var i:Int = idx + fn.length + 1;
+		var args:Array<String> = [];
+		var cur:StringBuf = new StringBuf();
+		var quote:String = null;
+		var depth:Int = 0;
+		while (i < line.length)
+		{
+			var c:String = line.charAt(i);
+			if (quote != null)
+			{
+				if (c == '\\' && i + 1 < line.length)
+				{
+					cur.add(line.charAt(i + 1));
+					i += 2;
+					continue;
+				}
+				if (c == quote)
+					quote = null;
+				else
+					cur.add(c);
+			}
+			else if (c == "'" || c == '"')
+				quote = c;
+			else if (c == '(')
+			{
+				depth++;
+				cur.add(c);
+			}
+			else if (c == ')')
+			{
+				if (depth == 0)
+				{
+					args.push(cur.toString().trim());
+					return args;
+				}
+				depth--;
+				cur.add(c);
+			}
+			else if (c == ',' && depth == 0)
+			{
+				args.push(cur.toString().trim());
+				cur = new StringBuf();
+			}
+			else
+				cur.add(c);
+			i++;
+		}
+		return null;
+	}
+
+	function luaFloat(s:String, def:Float):Float
+	{
+		if (s == null)
+			return def;
+		var f:Float = Std.parseFloat(s);
+		return Math.isNaN(f) ? def : f;
+	}
+
+	// Reads a hand-written stage Lua (no --@editor-meta): makeLuaSprite / makeAnimatedLuaSprite + setScrollFactor,
+	// scaleObject, setProperty(alpha/angle/flipX/flipY/antialiasing/color), addAnimationByPrefix, addLuaSprite.
+	function parsePlainStageLua(luaPath:String):Array<Dynamic>
+	{
+		var created:Array<Dynamic> = [];
+		var byName:Map<String, Dynamic> = [];
+		var added:Array<String> = [];
+
+		#if sys
+		try
+		{
+			for (raw in File.getContent(luaPath).split('\n'))
+			{
+				var line:String = raw.trim();
+				if (line.startsWith('--'))
+					continue;
+				var cm:Int = line.indexOf('--');
+				if (cm > 0)
+					line = line.substr(0, cm).trim();
+
+				var a:Array<String> = luaCallArgs(line, 'makeLuaSprite');
+				var animated:Bool = false;
+				if (a == null)
+				{
+					a = luaCallArgs(line, 'makeAnimatedLuaSprite');
+					animated = (a != null);
+				}
+				if (a != null && a.length >= 2)
+				{
+					var img:String = a[1].replace('\\', '/');
+					var obj:Dynamic = {
+						type: animated ? 'animatedSprite' : 'sprite',
+						name: a[0],
+						image: img,
+						x: luaFloat(a[2], 0),
+						y: luaFloat(a[3], 0),
+						scale: [1.0, 1.0],
+						scroll: [1.0, 1.0],
+						alpha: 1,
+						angle: 0,
+						color: 'FFFFFF',
+						filters: LOW_QUALITY | HIGH_QUALITY,
+						flipX: false,
+						flipY: false,
+						antialiasing: true
+					};
+					if (animated)
+					{
+						obj.animations = [];
+						obj.firstAnimation = null;
+					}
+					created.push(obj);
+					byName.set(a[0], obj);
+					continue;
+				}
+
+				a = luaCallArgs(line, 'setScrollFactor');
+				if (a != null && a.length >= 3 && byName.exists(a[0]))
+				{
+					byName.get(a[0]).scroll = [luaFloat(a[1], 1), luaFloat(a[2], 1)];
+					continue;
+				}
+
+				a = luaCallArgs(line, 'scaleObject');
+				if (a != null && a.length >= 2 && byName.exists(a[0]))
+				{
+					var sx:Float = luaFloat(a[1], 1);
+					byName.get(a[0]).scale = [sx, luaFloat(a[2], sx)];
+					continue;
+				}
+
+				a = luaCallArgs(line, 'setProperty');
+				if (a != null && a.length >= 2)
+				{
+					var dot:Int = a[0].lastIndexOf('.');
+					if (dot > 0 && byName.exists(a[0].substr(0, dot)))
+					{
+						var o:Dynamic = byName.get(a[0].substr(0, dot));
+						var prop:String = a[0].substr(dot + 1);
+						switch (prop)
+						{
+							case 'alpha': o.alpha = luaFloat(a[1], 1);
+							case 'angle': o.angle = luaFloat(a[1], 0);
+							case 'flipX': o.flipX = (a[1] == 'true');
+							case 'flipY': o.flipY = (a[1] == 'true');
+							case 'antialiasing': o.antialiasing = (a[1] == 'true');
+							case 'x': o.x = luaFloat(a[1], o.x);
+							case 'y': o.y = luaFloat(a[1], o.y);
+							case 'scale.x': o.scale = [luaFloat(a[1], 1), o.scale[1]];
+							case 'scale.y': o.scale = [o.scale[0], luaFloat(a[1], 1)];
+						}
+					}
+					continue;
+				}
+
+				a = luaCallArgs(line, 'setObjectCamera');
+				if (a != null)
+					continue;
+
+				a = luaCallArgs(line, 'addAnimationByPrefix');
+				if (a == null)
+					a = luaCallArgs(line, 'addAnimation');
+				if (a != null && a.length >= 3 && byName.exists(a[0]))
+				{
+					var o:Dynamic = byName.get(a[0]);
+					if (o.animations != null)
+					{
+						o.animations.push({
+							anim: a[1],
+							name: a[2],
+							fps: Std.int(luaFloat(a[3], 24)),
+							loop: (a[4] == 'true'),
+							indices: [],
+							offsets: [0, 0]
+						});
+						if (o.firstAnimation == null)
+							o.firstAnimation = a[1];
+					}
+					continue;
+				}
+
+				a = luaCallArgs(line, 'addLuaSprite');
+				if (a != null && a.length >= 1 && byName.exists(a[0]))
+					added.push(a[0]);
+			}
+		}
+		catch (e:Dynamic)
+		{
+			trace('Could not parse plain Lua "$luaPath": $e');
+		}
+		#end
+
+		var result:Array<Dynamic> = [];
+		var source:Array<String> = added.length > 0 ? added : [for (o in created) o.name];
+		var used:Map<String, Bool> = [];
+		for (n in source)
+		{
+			if (used.exists(n))
+				continue;
+			used.set(n, true);
+			var o:Dynamic = byName.get(n);
+			if (o == null)
+				continue;
+			if (o.type == 'animatedSprite' && (o.animations == null || o.animations.length < 1))
+			{
+				// no addAnimation lines: take them from the XML next to the image
+				var xml:String = findImageFile(o.image, 'xml');
+				if (xml != null)
+				{
+					var an:Array<AnimArray> = readXmlAnimations(xml);
+					if (an.length > 0)
+					{
+						o.animations = an;
+						o.firstAnimation = an[0].anim;
+					}
+				}
+				if (o.animations == null || o.animations.length < 1)
+					o.type = 'sprite';
+			}
+			result.push(o);
+		}
+		return result;
+	}
+
 	// Reads the "--@objects" line from the "--@editor-meta" block of a stage Lua.
 	function loadStageLuaObjects(luaPath:String):Array<Dynamic>
 	{
@@ -2866,7 +3263,10 @@ class StageEditorState extends MusicBeatState implements PsychUIEventHandler.Psy
 				if (_makeNewSprite == 'animatedSprite'
 					&& !Paths.fileExists('images/$imageToLoad.xml', TEXT)
 					&& !Paths.fileExists('images/$imageToLoad.json', TEXT)
-					&& !Paths.fileExists('images/$imageToLoad.txt', TEXT))
+					&& !Paths.fileExists('images/$imageToLoad.txt', TEXT)
+					&& findImageFile(imageToLoad, 'xml') == null
+					&& findImageFile(imageToLoad, 'json') == null
+					&& findImageFile(imageToLoad, 'txt') == null)
 				{
 					showOutput('No Animation file found with the same name of the image!', true);
 					_makeNewSprite = null;
@@ -3068,19 +3468,34 @@ class StageEditorMetaSprite
 
 	function set_image(v:String)
 	{
+		var loaded:Bool = false;
 		try
 		{
 			switch (type)
 			{
 				case 'sprite':
-					sprite.loadGraphic(Paths.image(v));
+					var g = Paths.image(v);
+					if (g != null)
+					{
+						sprite.loadGraphic(g);
+						loaded = (sprite.graphic != null);
+					}
 				case 'animatedSprite':
-					sprite.frames = Paths.getAtlas(v);
+					var fr = Paths.getAtlas(v);
+					if (fr != null)
+					{
+						sprite.frames = fr;
+						loaded = (sprite.frames != null);
+					}
 			}
 		}
 		catch (e:Dynamic) {}
 
-		if ((type == 'sprite' || type == 'animatedSprite') && (sprite.graphic == null || sprite.frames == null))
+		// Paths couldn't find it (other mod folder, assets/<week>/images, subfolders...): search every images folder
+		if (!loaded && (type == 'sprite' || type == 'animatedSprite'))
+			loaded = StageEditorState.loadImageFromDisk(sprite, v, type == 'animatedSprite');
+
+		if ((type == 'sprite' || type == 'animatedSprite') && (!loaded || sprite.graphic == null || sprite.frames == null))
 		{
 			trace('Could not load image "$v" for sprite "$name"');
 			sprite.makeGraphic(200, 200, FlxColor.MAGENTA);
@@ -3147,6 +3562,22 @@ class StageEditorMetaSprite
 				{
 					this.animations = data.animations;
 					this.firstAnimation = data.firstAnimation;
+
+					// make sure the animations exist (the image may have been loaded from disk)
+					if (this.animations != null && sprite.animation != null)
+					{
+						for (anim in this.animations)
+						{
+							if (anim == null || sprite.animation.getByName(anim.anim) != null)
+								continue;
+							if (anim.indices != null && anim.indices.length > 0)
+								sprite.animation.addByIndices(anim.anim, anim.name, anim.indices, '', anim.fps, anim.loop);
+							else
+								sprite.animation.addByPrefix(anim.anim, anim.name, anim.fps, anim.loop);
+						}
+						if (this.firstAnimation != null && sprite.animation.getByName(this.firstAnimation) != null)
+							sprite.animation.play(this.firstAnimation, true);
+					}
 				}
 		}
 	}
@@ -3715,6 +4146,7 @@ class StageEditorAnimationSubstate extends MusicBeatSubstate
 
 typedef PngEntry =
 {
-	var name:String; // path relative to mods/images, without extension
+	var name:String; // path relative to the images folder, without extension
 	var hasXml:Bool;
+	var root:String; // images folder it was found in (e.g. 'mods/images/', 'assets/shared/images/')
 }
