@@ -7216,13 +7216,19 @@ class ChartingState extends MusicBeatState implements PsychUIEventHandler.PsychU
 		//  - only ONE arrow per row: if the MIDI has a chord, the longest (then the highest) note is kept
 		//  - the same arrow is never used more than 2 times in a row
 		// The random generator is seeded from the file name + side, so importing the same file again gives the same chart.
-		var rngState:Int = 12345 + side * 777;
+		// (Float math on purpose: no integer overflow / Null<Int> problems on hxcpp)
+		var rngState:Float = 12345 + side * 777;
 		for (ci in 0...name.length)
-			rngState = (rngState * 31 + name.charCodeAt(ci)) & 0x3FFFFFFF;
+		{
+			var ch:Int = Std.int(name.charCodeAt(ci));
+			rngState = (rngState * 31 + ch) % 2147483647;
+		}
+		if (rngState < 1)
+			rngState = 12345;
 		var nextRand = function(max:Int):Int
 		{
-			rngState = (rngState * 1103515245 + 12345) & 0x3FFFFFFF;
-			return (rngState >> 8) % max;
+			rngState = (rngState * 48271) % 2147483647;
+			return Std.int(rngState / 256) % max;
 		};
 		var lastLane:Array<Int> = [-1, -1];
 		var sameCount:Array<Int> = [0, 0];
