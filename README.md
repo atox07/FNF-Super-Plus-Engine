@@ -130,11 +130,12 @@ You need to have:
 - **Dialogue Pixel Editor:** Added a new dedicated editor that allows you to easily edit and customize Week 6 pixel dialogues directly in-game.
 - **Change Stage Event:** Built-in hardcoded stage changing event designed for instantaneous switching with zero frame drops or lag.
 - **Character JSON Generator (Anims from XML):** Added a new "Anims from XML" button in the Character Editor that lets you pick any .xml + .png spritesheet from images/characters/ and automatically generates the character's animations json.
--  **MIDI to Chart System (Import MIDI):** Added a new "Import MIDI..." option in the Chart Editor that generates chart notes from .mid / .midi files.
+-  **MIDI to Chart System (Import MIDI OR OGG):** Added a new "Import MIDI..." option in the Chart Editor that generates chart notes from .mid / .midi files and now also from OGGs.
 - **Shader Compatibility Layer:** Automatic adaptation of legacy (0.6.3)
 - **Event Creator:** Full in-game visual editor for custom Lua events. 
 - **Menu Scripting:** MainMenuState can now load Lua/HScript from scripts/menus/MainMenuState/init.lua (or .hx)
 - **Stage Editor Remake:** Stage editor got fixed and now it works, you can also drag and drop the parts of the stage in it.
+- **Hud Editor:** Added an HUD editor where you can literally add and edit parts, such as: Strums, healthbar, timebar. You can al so do tweens to the strums and lots more!
 - **Outside of the Window:** You can now do cool events or scripts to work out of the window or generate other windows: Like in the Unrensposive fanmade mod.
 
 # Features inherited from Plus Engine (after 1.0.4)
