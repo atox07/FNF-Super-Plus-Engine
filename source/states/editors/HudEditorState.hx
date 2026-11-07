@@ -11,7 +11,8 @@ package states.editors;
  * COSA ESPORTA
  *   - overlay PNG importati dall'utente  -> function onCreate()
  *   - widget nativi/strum SPOSTATI       -> solo il diff rispetto al default
- *   - tween A->B singolo per target      -> onBeatHit / onStepHit / ecc.
+ *   - tween a CATENA (keyframe A->B->C...) per target -> onBeatHit / onStepHit / ecc.
+ *   - ordine di disegno (zIndex GLOBALE)  -> setObjectOrder / rimescolo in uiGroup
  *
  * NOTE SU QUESTO FORK (verificate leggendo PlayState.hx / StrumNote.hx):
  *   - Solo 4K: generateStaticArrows() fa "for (i in 0...4)".
@@ -27,9 +28,17 @@ package states.editors;
  *
  * TWEEN: modalita' cattura
  *   - Checkbox "Tween Capture Mode" (tasto T) nel tab Tween.
- *   - ON : Ctrl+click su elemento = registra A (from) e inizia il drag.
- *          Ctrl+click di nuovo (o bottone) = registra B (to), crea il tween e
- *          l'elemento TORNA ad A. ESC / click destro (senza trascinare) = annulla.
+ *   - ON : Ctrl+click su elemento = registra il keyframe A e inizia il drag.
+ *          Ctrl+click di nuovo = salva il keyframe successivo (B, C, D...) e RESTA
+ *          in cattura. ESC o bottone Finish = chiude la catena (la posizione
+ *          corrente diventa l'ultimo keyframe se diversa dall'ultimo salvato),
+ *          crea il tween e l'elemento TORNA ad A.
+ *          Click destro (senza trascinare) = annulla tutta la cattura.
+ *   - Durata/easing sono PER SEGMENTO (si scelgono dalla lista keyframe del tab Tween).
+ *     Con 2 keyframe l'export e' identico al vecchio A->B.
+ *
+ * DRAW ORDER: ogni elemento ha uno zIndex (default = ordine di creazione). Tab Object:
+ *   Move Up / Move Down (accanto al box Elements) e Bring to Front / Send to Back (tab Object). L'ordine e' GLOBALE.
  *   - OFF: Ctrl+drag sposta l'elemento in modo statico (come lo Stage Editor).
  *
  * ESEMPIO DI OUTPUT (1 overlay + 1 strum spostato + 1 tween al beat 16)
@@ -130,7 +139,6 @@ class HudEditorState extends MusicBeatState implements PsychUIEventHandler.Psych
 	var helpTexts:FlxSpriteGroup;
 	var outputTxt:FlxText;
 	var infoTxt:FlxText;
-	var zIndexTxt:FlxText;
 	var outputTime:Float = 0;
 
 	// Disegno helper (outline di selezione / ghost)
@@ -153,18 +161,15 @@ class HudEditorState extends MusicBeatState implements PsychUIEventHandler.Psych
 	var pickCycle:Int = 0;
 
 	// -------------------------------------------------------------------
-	// Cattura tween (Ctrl+click = A, Ctrl+click = B)
+	// Cattura tween a catena (Ctrl+click = A, poi B, C, D... ; ESC/Finish chiude)
 	// -------------------------------------------------------------------
 	var tweenCaptureMode:Bool = false;
 	var tweenCaptureActive:Bool = false;
 	var tweenCaptureTarget:EditorMetaSprite = null;
-	var tweenCaptureFromX:Float;
-	var tweenCaptureFromY:Float;
-	var capFromAlpha:Float = 1;
-	var capFromAngle:Float = 0;
-	var capFromScaleX:Float = 1;
+	var capKeys:Array<HudKeyframe> = []; // keyframe catturati finora (il primo = A)
+	var capFromScaleX:Float = 1; // scala X/Y di A (per il ritorno; i keyframe hanno scala uniforme)
 	var capFromScaleY:Float = 1;
-	var captureKeyframes:Array<HudTweenKeyframe> = [];
+	var tweenKeySel:Int = 0; // keyframe selezionato nel tab Tween
 
 	// Preview
 	var previewMeta:EditorMetaSprite = null;
@@ -202,6 +207,7 @@ class HudEditorState extends MusicBeatState implements PsychUIEventHandler.Psych
 		if (s != null && s.length > 0)
 			songName = s;
 
+		EditorMetaSprite.zCounter = 0;
 		buildTemplate();
 
 		screenUI();
@@ -272,6 +278,13 @@ class HudEditorState extends MusicBeatState implements PsychUIEventHandler.Psych
 		items.push(mTb);
 		applyDefaultPosition(mTb);
 
+		// In Psych timeBar e' aggiunta a uiGroup PRIMA di timeTxt, quindi il testo sta SOPRA la barra.
+		// timeBar va creata dopo timeTxt (la sua Y dipende da timeTxt): scambio gli zIndex invece
+		// dell'ordine di creazione, cosi' la barra finisce sotto il testo come nel gioco.
+		var tzSwap:Int = mTimeTxt.zIndex;
+		mTimeTxt.zIndex = mTimeTxt.defaultZ = mTb.zIndex;
+		mTb.zIndex = mTb.defaultZ = tzSwap;
+
 		// comboGroup: placeholder rettangolare. comboGroup parte da (0,0) e i
 		// rating/combo vengono posizionati in coordinate assolute PRIMA di
 		// essere aggiunti, quindi si sposta con un DELTA rispetto al default.
@@ -281,9 +294,6 @@ class HudEditorState extends MusicBeatState implements PsychUIEventHandler.Psych
 		var mCombo:EditorMetaSprite = new EditorMetaSprite('combo', 'comboGroup', combo);
 		items.push(mCombo);
 		applyDefaultPosition(mCombo);
-		for (i in 0...items.length) items[i].zIndex = i;
-		// Keep the timer bar above its text in the editor's global draw stack.
-		mTb.zIndex = mTimeTxt.zIndex + 1;
 	}
 
 	// Disegna un rettangolo con bordo + etichetta dentro un FlxSprite
@@ -439,12 +449,15 @@ class HudEditorState extends MusicBeatState implements PsychUIEventHandler.Psych
 			'Right Click (no drag) - Deselect (or cancel a tween capture)',
 			'W / S - Select previous / next element',
 			'T - Toggle Tween Capture Mode',
-			'   ON: Ctrl+Click saves A, then each Ctrl+Click adds a keyframe; Finish / ESC closes the chain',
-			'   ESC / Finish = close chain; Right Click = cancel capture',
-			'H - Toggle editor panels and object list',
+			'   ON: Ctrl+Click = keyframe A, Ctrl+Click again = B, C, D... (chain)',
+			'   ESC / Finish button = close the chain and create the tween (element returns to A)',
+			'   Right Click (no drag) = cancel the whole capture',
+			'',
+			'Elements box: Move Up / Move Down = draw order (zIndex); Object tab: to Front / to Back',
 			'',
 			'F1 - This help',
 			'$btn - Toggle UI panels',
+			'H - Hide / show the panels and the list (sprites + selection stay; not while typing)',
 			'Hold Shift - Move 4x faster',
 			'Hold Control - Move pixel-by-pixel',
 			'',
@@ -556,6 +569,15 @@ class HudEditorState extends MusicBeatState implements PsychUIEventHandler.Psych
 		buttonDelete.normalStyle.bgColor = FlxColor.RED;
 		buttonDelete.normalStyle.textColor = FlxColor.WHITE;
 		tab_group.add(buttonDelete);
+
+		// Move Up / Move Down: cambiano lo zIndex (draw order globale) dell'elemento selezionato
+		var buttonMoveUp:PsychUIButton = new PsychUIButton(buttonX, buttonY + 90, 'Move Up', function() moveSelectedZ('forward'));
+		buttonMoveUp.cameras = [camHUD];
+		tab_group.add(buttonMoveUp);
+
+		var buttonMoveDown:PsychUIButton = new PsychUIButton(buttonX, buttonY + 120, 'Move Down', function() moveSelectedZ('backward'));
+		buttonMoveDown.cameras = [camHUD];
+		tab_group.add(buttonMoveDown);
 	}
 
 	function deleteOverlay(m:EditorMetaSprite)
@@ -593,7 +615,7 @@ class HudEditorState extends MusicBeatState implements PsychUIEventHandler.Psych
 			case 'customFunction': 'fn ' + t.customFuncName;
 			default: 'start';
 		}
-		return 'T| ' + t.targetName + ' (' + trig + ')';
+		return 'T| ' + t.targetName + ' (' + trig + ')' + (t.keys.length > 2 ? ' x' + t.keys.length : '');
 	}
 
 	// Ricostruisce la lista (elementi raggruppati: Strums, Widgets, Overlays, poi Tweens)
@@ -736,9 +758,9 @@ class HudEditorState extends MusicBeatState implements PsychUIEventHandler.Psych
 	var flipXCheckBox:PsychUICheckBox;
 	var flipYCheckBox:PsychUICheckBox;
 	var antialiasingCheckbox:PsychUICheckBox;
+	var zLabel:FlxText;
 
 	var tweenTargetTxt:FlxText;
-	var tweenFramesTxt:FlxText;
 	var tPropX:PsychUICheckBox;
 	var tPropY:PsychUICheckBox;
 	var tPropAlpha:PsychUICheckBox;
@@ -754,6 +776,12 @@ class HudEditorState extends MusicBeatState implements PsychUIEventHandler.Psych
 	var tFuncInput:PsychUIInputText;
 	var tModeCheckbox:PsychUICheckBox;
 	var tCaptureButton:PsychUIButton;
+	var tFinishButton:PsychUIButton;
+	var tRemoveKeyButton:PsychUIButton;
+	var tDurLabel:FlxText;
+	var tEaseLabel:FlxText;
+	var tKeyDD:PsychUIDropDownMenu;
+	var tKeyList:FlxText;
 
 	public static final EASE_LIST:Array<String> = [
 		'linear', 'quadIn', 'quadOut', 'quadInOut', 'cubeIn', 'cubeOut', 'cubeInOut', 'quartIn', 'quartOut', 'quartInOut', 'quintIn', 'quintOut',
@@ -764,7 +792,7 @@ class HudEditorState extends MusicBeatState implements PsychUIEventHandler.Psych
 
 	function editorUI()
 	{
-		UI_box = new PsychUIBox(FlxG.width - 235, 20, 215, 470, ['Settings', 'Object', 'Tween']);
+		UI_box = new PsychUIBox(FlxG.width - 235, 20, 215, Std.int(Math.min(660, FlxG.height - 40)), ['Settings', 'Object', 'Tween']);
 		UI_box.cameras = [camHUD];
 		UI_box.scrollFactor.set();
 		add(UI_box);
@@ -834,7 +862,7 @@ class HudEditorState extends MusicBeatState implements PsychUIEventHandler.Psych
 		resetButton.normalStyle.textColor = FlxColor.WHITE;
 		tab_group.add(resetButton);
 
-		tab_group.add(new FlxText(objX, objY + 230, 195, 'F1: help   F2: hide/show panels\nPanels can be dragged by their tabs.'));
+		tab_group.add(new FlxText(objX, objY + 230, 195, 'F1: help   F2 / H: hide/show panels\nPanels can be dragged by their tabs.'));
 
 		// la dropdown va aggiunta per ULTIMA (si apre sopra agli altri controlli)
 		tab_group.add(new FlxText(objX, objY - 18, 190, 'Song (export path):'));
@@ -1017,30 +1045,92 @@ class HudEditorState extends MusicBeatState implements PsychUIEventHandler.Psych
 		}, 120);
 		tab_group.add(resetElemButton);
 
-		objY += 32;
-		zIndexTxt = new FlxText(objX, objY, 180, 'zIndex: 0');
-		tab_group.add(zIndexTxt);
-		var forwardBtn:PsychUIButton = new PsychUIButton(objX, objY + 20, 'Bring Forward', function() changeSelectedZ(1), 90);
-		var backwardBtn:PsychUIButton = new PsychUIButton(objX + 96, objY + 20, 'Send Backward', function() changeSelectedZ(-1), 95);
-		tab_group.add(forwardBtn);
-		tab_group.add(backwardBtn);
+		// ---- draw order (zIndex globale) ----
+		objY += 40;
+		zLabel = new FlxText(objX, objY, 195, 'zIndex: -');
+		tab_group.add(zLabel);
+
+		objY += 18;
+		tab_group.add(new PsychUIButton(objX, objY, 'Bring to Front', function() moveSelectedZ('front'), 95));
+		tab_group.add(new PsychUIButton(objX + 100, objY, 'Send to Back', function() moveSelectedZ('back'), 95));
 	}
 
-	function changeSelectedZ(delta:Int)
+	// Elementi in ordine di disegno (zIndex crescente; a parita' vale l'ordine di creazione)
+	function sortedItems():Array<EditorMetaSprite>
+	{
+		var s:Array<EditorMetaSprite> = items.copy();
+		s.sort(function(a:EditorMetaSprite, b:EditorMetaSprite):Int
+		{
+			if (a.zIndex != b.zIndex)
+				return a.zIndex - b.zIndex;
+			return items.indexOf(a) - items.indexOf(b);
+		});
+		return s;
+	}
+
+	function moveSelectedZ(mode:String)
 	{
 		var m:EditorMetaSprite = getSelected();
-		if (m == null) return;
-		var ordered = items.copy();
-		ordered.sort((a, b) -> a.zIndex - b.zIndex);
-		var at = ordered.indexOf(m);
-		var next = at + delta;
-		if (next < 0 || next >= ordered.length) return;
-		var other = ordered[next];
-		var z = m.zIndex;
-		m.zIndex = other.zIndex;
-		other.zIndex = z;
+		if (m == null)
+		{
+			showOutput('Select an element first.', true);
+			return;
+		}
+		var s:Array<EditorMetaSprite> = sortedItems();
+		var i:Int = s.indexOf(m);
+		var changed:Bool = false;
+		switch (mode)
+		{
+			case 'forward':
+				if (i < s.length - 1)
+				{
+					var o:EditorMetaSprite = s[i + 1];
+					var z:Int = m.zIndex;
+					m.zIndex = o.zIndex;
+					o.zIndex = z;
+					changed = true;
+				}
+			case 'backward':
+				if (i > 0)
+				{
+					var o:EditorMetaSprite = s[i - 1];
+					var z:Int = m.zIndex;
+					m.zIndex = o.zIndex;
+					o.zIndex = z;
+					changed = true;
+				}
+			case 'front':
+				if (i < s.length - 1)
+				{
+					m.zIndex = s[s.length - 1].zIndex + 1;
+					changed = true;
+				}
+			case 'back':
+				if (i > 0)
+				{
+					m.zIndex = s[0].zIndex - 1;
+					changed = true;
+				}
+		}
+		if (!changed)
+		{
+			showOutput((mode == 'forward' || mode == 'front') ? 'Already in front.' : 'Already at the back.', true);
+			return;
+		}
 		unsavedProgress = true;
-		updateSelectedUI();
+		refreshZLabel();
+	}
+
+	function refreshZLabel()
+	{
+		var m:EditorMetaSprite = getSelected();
+		if (m == null)
+		{
+			zLabel.text = 'zIndex: -';
+			return;
+		}
+		var s:Array<EditorMetaSprite> = sortedItems();
+		zLabel.text = 'zIndex: ' + m.zIndex + '  (layer ' + (s.indexOf(m) + 1) + ' of ' + s.length + ', 1 = back)';
 	}
 
 	function resetItemToDefault(m:EditorMetaSprite)
@@ -1062,13 +1152,13 @@ class HudEditorState extends MusicBeatState implements PsychUIEventHandler.Psych
 		{
 			infoTxt.text = '';
 			tweenTargetTxt.text = 'Target: (nothing selected)';
+			zLabel.text = 'zIndex: -';
 			refreshTweenUI();
 			uiUpdating = false;
 			return;
 		}
 
 		infoTxt.text = '${m.name}   X: ${Math.round(m.x)}   Y: ${Math.round(m.y)}';
-		if (zIndexTxt != null) zIndexTxt.text = 'zIndex: ' + m.zIndex;
 		nameInputText.text = m.name;
 		imgTxt.text = 'Image: ' + (m.type == 'overlay' ? m.image : '(' + m.type + ')');
 		posStepperX.value = Math.round(m.x);
@@ -1080,6 +1170,7 @@ class HudEditorState extends MusicBeatState implements PsychUIEventHandler.Psych
 		flipXCheckBox.checked = m.flipX;
 		flipYCheckBox.checked = m.flipY;
 		antialiasingCheckbox.checked = m.antialiasing;
+		refreshZLabel();
 		refreshTweenUI();
 		uiUpdating = false;
 	}
@@ -1135,9 +1226,12 @@ class HudEditorState extends MusicBeatState implements PsychUIEventHandler.Psych
 		for (c in [tPropX, tPropY, tPropAlpha, tPropAngle, tPropScale])
 			tab_group.add(c);
 
-		tab_group.add(new FlxText(objX, 76, 90, 'Duration (s):'));
+		// Duration / Easing sono PER SEGMENTO: modificano il segmento che ARRIVA al keyframe
+		// selezionato in basso (A e' il punto di partenza: li' modificano i default dei nuovi segmenti).
+		tDurLabel = new FlxText(objX, 76, 95, 'Duration (s):');
+		tab_group.add(tDurLabel);
 		tDuration = new PsychUINumericStepper(objX, 92, 0.1, 1, 0.05, 600, 2);
-		tDuration.onValueChange = function() { if (!uiUpdating) activeTweenData().duration = tDuration.value; };
+		tDuration.onValueChange = function() { if (!uiUpdating) setSegmentDuration(tDuration.value); };
 		tab_group.add(tDuration);
 
 		tab_group.add(new FlxText(objX + 100, 76, 90, 'Delay (s):'));
@@ -1145,7 +1239,8 @@ class HudEditorState extends MusicBeatState implements PsychUIEventHandler.Psych
 		tDelay.onValueChange = function() { if (!uiUpdating) activeTweenData().delay = tDelay.value; };
 		tab_group.add(tDelay);
 
-		tab_group.add(new FlxText(objX, 122, 100, 'Easing:'));
+		tEaseLabel = new FlxText(objX, 122, 150, 'Easing:');
+		tab_group.add(tEaseLabel);
 
 		tLoop = new PsychUICheckBox(objX, 166, 'Loop', 50);
 		tYoyo = new PsychUICheckBox(objX + 80, 166, 'Yoyo', 50);
@@ -1176,7 +1271,20 @@ class HudEditorState extends MusicBeatState implements PsychUIEventHandler.Psych
 		tCaptureButton.normalStyle.textColor = FlxColor.WHITE;
 		tab_group.add(tCaptureButton);
 
-		var previewButton:PsychUIButton = new PsychUIButton(objX, 378, 'Preview Tween', function()
+		tFinishButton = new PsychUIButton(objX, 378, 'Finish (ESC)', function()
+		{
+			if (!tweenCaptureActive)
+			{
+				showOutput('No capture in progress. Press Capture Tween first.', true);
+				return;
+			}
+			finishTweenCapture();
+		}, 150);
+		tFinishButton.normalStyle.bgColor = FlxColor.ORANGE;
+		tFinishButton.normalStyle.textColor = FlxColor.WHITE;
+		tab_group.add(tFinishButton);
+
+		var previewButton:PsychUIButton = new PsychUIButton(objX, 404, 'Preview Tween', function()
 		{
 			var t:HudTweenData = tweenForTarget(getSelected());
 			if (t == null)
@@ -1188,7 +1296,7 @@ class HudEditorState extends MusicBeatState implements PsychUIEventHandler.Psych
 		}, 150);
 		tab_group.add(previewButton);
 
-		var deleteButton:PsychUIButton = new PsychUIButton(objX, 404, 'Delete Tween', function()
+		var deleteButton:PsychUIButton = new PsychUIButton(objX, 430, 'Delete Tween', function()
 		{
 			var t:HudTweenData = tweenForTarget(getSelected());
 			if (t == null)
@@ -1197,42 +1305,128 @@ class HudEditorState extends MusicBeatState implements PsychUIEventHandler.Psych
 				return;
 			}
 			stopPreview();
-			hudTweens.remove(t);
+			hudTweens.remove(t); // cancella TUTTA la catena di keyframe
 			refreshList();
 			updateSelectedUI();
 			unsavedProgress = true;
-			showOutput('Tween deleted.');
+			showOutput('Tween deleted (all keyframes).');
 		}, 150);
 		deleteButton.normalStyle.bgColor = FlxColor.RED;
 		deleteButton.normalStyle.textColor = FlxColor.WHITE;
 		tab_group.add(deleteButton);
-		tweenFramesTxt = new FlxText(objX, 430, 190, 'Keyframes: none');
-		tab_group.add(tweenFramesTxt);
+
+		// ---- lista keyframe ----
+		tab_group.add(new FlxText(objX, 460, 195, 'Keyframes (pick one to edit its segment):'));
+
+		tRemoveKeyButton = new PsychUIButton(objX, 502, 'Remove Keyframe', removeSelectedKeyframe, 150);
+		tRemoveKeyButton.normalStyle.bgColor = FlxColor.fromRGB(150, 40, 40);
+		tRemoveKeyButton.normalStyle.textColor = FlxColor.WHITE;
+		tab_group.add(tRemoveKeyButton);
+
+		tKeyList = new FlxText(objX, 532, 195, '');
+		tab_group.add(tKeyList);
 
 		// le dropdown vanno aggiunte per ULTIME: si aprono sopra agli altri controlli
 		tEasingDD = new PsychUIDropDownMenu(objX, 138, EASE_LIST, function(sel:Int, selected:String)
 		{
 			if (!uiUpdating)
-				activeTweenData().easing = selected;
+				setSegmentEasing(selected);
 		}, 150, 8);
 		tTriggerDD = new PsychUIDropDownMenu(objX, 208, TRIGGER_LIST, function(sel:Int, selected:String)
 		{
 			if (!uiUpdating)
 				activeTweenData().trigger = selected;
 		}, 150, 4);
+		tKeyDD = new PsychUIDropDownMenu(objX, 476, ['A (start)'], function(sel:Int, selected:String)
+		{
+			if (uiUpdating)
+				return;
+			tweenKeySel = sel;
+			refreshTweenUI(false);
+		}, 150, 8);
 		tab_group.add(tTriggerDD);
 		tab_group.add(tEasingDD);
+		tab_group.add(tKeyDD);
 	}
 
 	// Il tween del target selezionato, oppure il template (impostazioni per il prossimo tween)
 	function activeTweenData():HudTweenData
 	{
-		if (tweenCaptureActive) return tweenTemplate;
 		var t:HudTweenData = tweenForTarget(getSelected());
 		return (t != null) ? t : tweenTemplate;
 	}
 
-	function refreshTweenUI()
+	// -------------------------------------------------------------------
+	// Keyframe: helper
+	// -------------------------------------------------------------------
+	function keyName(i:Int):String
+		return (i < 26) ? String.fromCharCode(65 + i) : 'K' + i;
+
+	// Keyframe attivi: quelli della cattura in corso, altrimenti quelli del tween del target selezionato
+	function activeKeys():Array<HudKeyframe>
+	{
+		if (tweenCaptureActive)
+			return capKeys;
+		var t:HudTweenData = tweenForTarget(getSelected());
+		return (t != null) ? t.keys : null;
+	}
+
+	// Il keyframe di cui si modifica il segmento in arrivo (null = si modificano i default del template)
+	function selectedSegmentKey():HudKeyframe
+	{
+		var ks:Array<HudKeyframe> = activeKeys();
+		if (ks == null || ks.length < 1)
+			return null;
+		tweenKeySel = Std.int(FlxMath.bound(tweenKeySel, 0, ks.length - 1));
+		return (tweenKeySel >= 1) ? ks[tweenKeySel] : null;
+	}
+
+	function setSegmentDuration(v:Float)
+	{
+		var k:HudKeyframe = selectedSegmentKey();
+		if (k != null)
+			k.duration = v;
+		else
+			tweenTemplate.duration = v;
+		refreshTweenUI();
+	}
+
+	function setSegmentEasing(e:String)
+	{
+		var k:HudKeyframe = selectedSegmentKey();
+		if (k != null)
+			k.easing = e;
+		else
+			tweenTemplate.easing = e;
+		refreshTweenUI();
+	}
+
+	function keyLabel(ks:Array<HudKeyframe>, i:Int):String
+	{
+		if (i == 0)
+			return keyName(0) + ' (start)';
+		return keyName(i) + '  ' + Std.string(Math.round(ks[i].duration * 100) / 100) + 's ' + ks[i].easing;
+	}
+
+	function removeSelectedKeyframe()
+	{
+		var ks:Array<HudKeyframe> = activeKeys();
+		if (ks == null || ks.length < 3 || tweenKeySel < 1 || tweenKeySel > ks.length - 2)
+		{
+			showOutput('Pick an INTERMEDIATE keyframe (not the first / last) to remove it.', true);
+			return;
+		}
+		stopPreview();
+		var name:String = keyName(tweenKeySel);
+		ks.splice(tweenKeySel, 1);
+		tweenKeySel = Std.int(Math.min(tweenKeySel, ks.length - 1));
+		unsavedProgress = true;
+		refreshList();
+		refreshTweenUI();
+		showOutput('Keyframe ' + name + ' removed.');
+	}
+
+	function refreshTweenUI(rebuildKeyList:Bool = true)
 	{
 		var wasUpdating:Bool = uiUpdating;
 		uiUpdating = true;
@@ -1240,24 +1434,76 @@ class HudEditorState extends MusicBeatState implements PsychUIEventHandler.Psych
 		var t:HudTweenData = activeTweenData();
 		var has:Bool = (tweenForTarget(m) != null);
 
-		tweenTargetTxt.text = 'Target: ' + (m != null ? m.name : '(nothing selected)') + (has ? '  [has tween]' : '');
+		tweenTargetTxt.text = 'Target: ' + (m != null ? m.name : '(nothing selected)')
+			+ (tweenCaptureActive ? '  [capturing: ' + capKeys.length + ' keys]' : (has ? '  [has tween]' : ''));
 		tPropX.checked = t.propX;
 		tPropY.checked = t.propY;
 		tPropAlpha.checked = t.propAlpha;
 		tPropAngle.checked = t.propAngle;
 		tPropScale.checked = t.propScale;
-		tDuration.value = t.duration;
 		tDelay.value = t.delay;
 		tLoop.checked = t.loop;
 		tYoyo.checked = t.yoyo;
 		tBeat.value = t.triggerBeat;
 		tFuncInput.text = t.customFuncName;
-		tEasingDD.selectedLabel = t.easing;
 		tTriggerDD.selectedLabel = t.trigger;
 		tModeCheckbox.checked = tweenCaptureMode;
-		tCaptureButton.label = tweenCaptureActive ? 'Finish Chain' : 'Capture Chain';
-		var frames = tweenCaptureActive ? captureKeyframes : ((t.keyframes != null) ? t.keyframes : []);
-		tweenFramesTxt.text = 'Keyframes: ' + (frames.length > 0 ? [for (i in 0...frames.length) String.fromCharCode(65 + i) + ':(' + Math.round(frames[i].x) + ',' + Math.round(frames[i].y) + ') ' + frames[i].duration + 's/' + frames[i].easing].join('  ') : (tweenCaptureActive ? 'capturing ' + captureKeyframes.length : 'none'));
+		tCaptureButton.label = tweenCaptureActive ? 'Add Keyframe (Ctrl+Click)' : 'Capture Tween (A)';
+
+		// Duration / Easing del segmento selezionato (o default dei nuovi segmenti)
+		var ks:Array<HudKeyframe> = activeKeys();
+		var seg:HudKeyframe = selectedSegmentKey();
+		if (seg != null)
+		{
+			var seq:String = keyName(tweenKeySel - 1) + '->' + keyName(tweenKeySel);
+			tDurLabel.text = 'Dur ' + seq + ' (s):';
+			tEaseLabel.text = 'Easing ' + seq + ':';
+			tDuration.value = seg.duration;
+			tEasingDD.selectedLabel = seg.easing;
+		}
+		else
+		{
+			tDurLabel.text = 'Dur. (new) (s):';
+			tEaseLabel.text = 'Easing (new segments):';
+			tDuration.value = tweenTemplate.duration;
+			tEasingDD.selectedLabel = tweenTemplate.easing;
+		}
+
+		// lista keyframe
+		if (ks == null || ks.length < 1)
+		{
+			if (rebuildKeyList)
+			{
+				tKeyDD.list = ['(no keyframes)'];
+				tKeyDD.selectedLabel = '(no keyframes)';
+			}
+			tKeyList.text = '(no tween on this element)';
+		}
+		else
+		{
+			if (rebuildKeyList)
+			{
+				var labels:Array<String> = [for (i in 0...ks.length) keyLabel(ks, i)];
+				tKeyDD.list = labels;
+				tKeyDD.selectedLabel = labels[tweenKeySel];
+			}
+
+			var maxLines:Int = 10;
+			var lo:Int = Std.int(Math.max(0, Math.min(tweenKeySel - 4, ks.length - maxLines)));
+			var hi:Int = Std.int(Math.min(ks.length, lo + maxLines));
+			var lines:Array<String> = [];
+			if (lo > 0)
+				lines.push('   ...');
+			for (i in lo...hi)
+			{
+				var k:HudKeyframe = ks[i];
+				var pos:String = '(' + Math.round(k.x) + ',' + Math.round(k.y) + ')';
+				lines.push((i == tweenKeySel ? '> ' : '  ') + keyName(i) + ' ' + pos + (i == 0 ? '  start' : '  ' + Std.string(Math.round(k.duration * 100) / 100) + 's ' + k.easing));
+			}
+			if (hi < ks.length)
+				lines.push('   ...');
+			tKeyList.text = lines.join('\n');
+		}
 		uiUpdating = wasUpdating;
 	}
 
@@ -1266,12 +1512,12 @@ class HudEditorState extends MusicBeatState implements PsychUIEventHandler.Psych
 		tweenCaptureMode = on;
 		if (!on && tweenCaptureActive)
 			cancelTweenCapture();
-		showOutput(on ? 'Tween Capture Mode ON: Ctrl+Click = A, Ctrl+Click again = B' : 'Tween Capture Mode OFF: Ctrl+Drag moves statically');
+		showOutput(on ? 'Tween Capture Mode ON: Ctrl+Click = keyframe A, B, C... (ESC / Finish to close)' : 'Tween Capture Mode OFF: Ctrl+Drag moves statically');
 		refreshTweenUI();
 	}
 
 	// -------------------------------------------------------------------
-	// Cattura tween
+	// Cattura tween (catena di keyframe)
 	// -------------------------------------------------------------------
 	function indexOfTarget(t:HudTweenData):Int
 	{
@@ -1301,6 +1547,24 @@ class HudEditorState extends MusicBeatState implements PsychUIEventHandler.Psych
 		return null;
 	}
 
+	// Fotografa lo stato corrente dell'elemento come keyframe
+	// (duration/easing = default del template per il segmento che ARRIVA qui)
+	function snapshotKey(m:EditorMetaSprite):HudKeyframe
+	{
+		var k:HudKeyframe = new HudKeyframe();
+		k.x = m.x;
+		k.y = m.y;
+		k.alpha = m.alpha;
+		k.angle = m.canRotate ? m.angle : 0;
+		k.scale = m.canScale ? m.scale[0] : 1;
+		k.duration = tweenTemplate.duration;
+		k.easing = tweenTemplate.easing;
+		return k;
+	}
+
+	function sameKeyState(a:HudKeyframe, b:HudKeyframe):Bool
+		return !differs(a.x, b.x) && !differs(a.y, b.y) && !differs(a.alpha, b.alpha) && !differs(a.angle, b.angle) && !differs(a.scale, b.scale);
+
 	function beginTweenCapture(m:EditorMetaSprite)
 	{
 		if (m == null)
@@ -1312,26 +1576,40 @@ class HudEditorState extends MusicBeatState implements PsychUIEventHandler.Psych
 		}
 		stopPreview();
 		tweenCaptureTarget = m;
-		captureKeyframes = [];
-		tweenCaptureFromX = m.x;
-		tweenCaptureFromY = m.y;
-		capFromAlpha = m.alpha;
-		capFromAngle = m.angle;
+		capKeys = [snapshotKey(m)];
 		capFromScaleX = m.scale[0];
 		capFromScaleY = m.scale[1];
+		tweenKeySel = 0;
 		tweenCaptureActive = true;
-		var firstKf = new HudTweenKeyframe(m.x, m.y, m.alpha, m.angle, m.scale[0], m.scale[1]);
-		firstKf.duration = tweenTemplate.duration; firstKf.easing = tweenTemplate.easing;
-		captureKeyframes.push(firstKf);
-		showOutput('Point A saved for "${m.name}". Move it, then Ctrl+Click (or the button) for point B.');
+		showOutput('Keyframe A saved for "${m.name}". Move it, then Ctrl+Click (or the button) for B, C, D... ESC / Finish to close.');
 		refreshTweenUI();
+	}
+
+	// Salva lo stato corrente come nuovo keyframe e RESTA in cattura
+	function addCaptureKeyframe():Bool
+	{
+		if (!tweenCaptureActive || tweenCaptureTarget == null || capKeys.length < 1)
+			return false;
+
+		var k:HudKeyframe = snapshotKey(tweenCaptureTarget);
+		if (sameKeyState(k, capKeys[capKeys.length - 1]))
+		{
+			showOutput('Same as keyframe ' + keyName(capKeys.length - 1) + ': move the element first.', true);
+			return false;
+		}
+		capKeys.push(k);
+		tweenKeySel = capKeys.length - 1;
+		unsavedProgress = true;
+		showOutput('Keyframe ' + keyName(capKeys.length - 1) + ' saved. Move on, Ctrl+Click for the next one; ESC / Finish to close.');
+		refreshTweenUI();
+		return true;
 	}
 
 	function onCaptureButton()
 	{
 		if (tweenCaptureActive)
 		{
-			finishTweenCapture();
+			addCaptureKeyframe();
 			return;
 		}
 		var m:EditorMetaSprite = getSelected();
@@ -1343,14 +1621,17 @@ class HudEditorState extends MusicBeatState implements PsychUIEventHandler.Psych
 		beginTweenCapture(m);
 	}
 
-	// Riporta il target ai valori di A
+	// Riporta il target ai valori di A (primo keyframe)
 	function revertCapture(m:EditorMetaSprite)
 	{
-		m.x = tweenCaptureFromX;
-		m.y = tweenCaptureFromY;
-		m.alpha = capFromAlpha;
+		if (capKeys.length < 1)
+			return;
+		var a:HudKeyframe = capKeys[0];
+		m.x = a.x;
+		m.y = a.y;
+		m.alpha = a.alpha;
 		if (m.canRotate)
-			m.angle = capFromAngle;
+			m.angle = a.angle;
 		if (m.canScale)
 			m.setScale(capFromScaleX, capFromScaleY, m.type == 'overlay');
 	}
@@ -1363,45 +1644,67 @@ class HudEditorState extends MusicBeatState implements PsychUIEventHandler.Psych
 			revertCapture(tweenCaptureTarget);
 		tweenCaptureActive = false;
 		tweenCaptureTarget = null;
-		captureKeyframes = [];
+		capKeys = [];
 		dragSprite = null;
 		showOutput('Tween capture cancelled.');
 		updateSelectedUI();
 	}
 
+	// Chiude la catena: la posizione corrente diventa l'ultimo keyframe (se diversa dall'ultimo salvato)
 	function finishTweenCapture()
 	{
-		if (!tweenCaptureActive || tweenCaptureTarget == null) return;
-		var m = tweenCaptureTarget;
-		var last = new HudTweenKeyframe(m.x, m.y, m.alpha, m.angle, m.scale[0], m.scale[1]);
-		last.duration = tweenTemplate.duration; last.easing = tweenTemplate.easing;
-		if (captureKeyframes.length == 0 || !captureKeyframes[captureKeyframes.length - 1].sameAs(last))
-			captureKeyframes.push(last);
-		if (captureKeyframes.length < 2)
+		if (!tweenCaptureActive || tweenCaptureTarget == null)
+			return;
+
+		var m:EditorMetaSprite = tweenCaptureTarget;
+		var cur:HudKeyframe = snapshotKey(m);
+		if (capKeys.length > 0 && !sameKeyState(cur, capKeys[capKeys.length - 1]))
+			capKeys.push(cur);
+
+		if (capKeys.length < 2)
 		{
-			showOutput('Add at least one point after A before finishing.', true);
+			showOutput('Only one keyframe: tween not created.', true);
+			cancelTweenCapture();
 			return;
 		}
-		var t = new HudTweenData();
+
+		var t:HudTweenData = new HudTweenData();
 		t.copySettingsFrom(tweenTemplate);
 		t.targetType = m.tweenKind();
 		t.targetName = m.name;
 		t.targetIndex = m.targetIndex;
-		t.keyframes = captureKeyframes.copy();
-		var a = t.keyframes[0];
-		var b = t.keyframes[1];
-		t.fromX=a.x; t.fromY=a.y; t.toX=b.x; t.toY=b.y;
-		t.fromAlpha=a.alpha; t.toAlpha=b.alpha; t.fromAngle=a.angle; t.toAngle=b.angle;
-		t.fromScale=a.scaleX; t.toScale=b.scaleX;
-        t.propX = t.keyframes.length > 1 && Lambda.exists(t.keyframes, k -> differs(k.x, a.x));
-        t.propY = t.keyframes.length > 1 && Lambda.exists(t.keyframes, k -> differs(k.y, a.y));
-        t.propAlpha = Lambda.exists(t.keyframes, k -> differs(k.alpha, a.alpha));
-        t.propAngle = Lambda.exists(t.keyframes, k -> differs(k.angle, a.angle));
-        t.propScale = Lambda.exists(t.keyframes, k -> differs(k.scaleX, a.scaleX) || differs(k.scaleY, a.scaleY));
-		var existing = tweenForTarget(m);
+		t.keys = capKeys.copy();
+
+		// abilita automaticamente le proprieta' che cambiano davvero tra keyframe consecutivi
+		var any:Bool = false;
+		for (i in 1...t.keys.length)
+		{
+			var p:HudKeyframe = t.keys[i - 1];
+			var c:HudKeyframe = t.keys[i];
+			if (differs(p.x, c.x))
+				any = t.propX = true;
+			if (differs(p.y, c.y))
+				any = t.propY = true;
+			if (differs(p.alpha, c.alpha))
+				any = t.propAlpha = true;
+			if (differs(p.angle, c.angle))
+				any = t.propAngle = true;
+			if (differs(p.scale, c.scale))
+				any = t.propScale = true;
+		}
+
+		if (!any)
+		{
+			showOutput('All keyframes are identical: tween not created.', true);
+			cancelTweenCapture();
+			return;
+		}
+
+		var existing:HudTweenData = tweenForTarget(m);
 		if (existing != null)
 		{
-			askConfirm('"${m.name}" already has a tween.\\nReplace it?', function() commitTween(t, existing, m), function() cancelTweenCapture());
+			// NON permetto due tween sullo stesso target senza conferma
+			askConfirm('"${m.name}" already has a tween.\nReplace it?', function() commitTween(t, existing, m), function() cancelTweenCapture());
 			return;
 		}
 		commitTween(t, null, m);
@@ -1414,17 +1717,16 @@ class HudEditorState extends MusicBeatState implements PsychUIEventHandler.Psych
 		hudTweens.push(t);
 
 		// il tween e' un DATO: l'elemento torna alla posizione A
-		var first = t.keyframes[0];
-		m.x = first.x; m.y = first.y; m.alpha = first.alpha; m.angle = first.angle;
-		if (m.canScale) m.setScale(first.scaleX, first.scaleY, m.type == 'overlay');
+		revertCapture(m);
 		tweenCaptureActive = false;
-		captureKeyframes = [];
 		tweenCaptureTarget = null;
+		capKeys = [];
+		tweenKeySel = t.keys.length - 1;
 		dragSprite = null;
 		unsavedProgress = true;
 		refreshList();
 		updateSelectedUI();
-		showOutput('Tween created for "${m.name}". The element is back at point A.');
+		showOutput('Tween created for "${m.name}" (' + t.keys.length + ' keyframes). The element is back at point A.');
 	}
 
 	// -------------------------------------------------------------------
@@ -1471,6 +1773,25 @@ class HudEditorState extends MusicBeatState implements PsychUIEventHandler.Psych
 		}
 	}
 
+	// Segmenti della catena: avanti A->B->C... e, con yoyo, anche il ritorno (stessa durata/easing dei segmenti originali)
+	function buildSegs(t:HudTweenData, withReverse:Bool):Array<HudSeg>
+	{
+		var k:Array<HudKeyframe> = t.keys;
+		var segs:Array<HudSeg> = [];
+		for (i in 1...k.length)
+			segs.push({x: k[i].x, y: k[i].y, alpha: k[i].alpha, angle: k[i].angle, scale: k[i].scale, dur: k[i].duration, ease: k[i].easing});
+		if (withReverse)
+		{
+			var j:Int = k.length - 2;
+			while (j >= 0)
+			{
+				segs.push({x: k[j].x, y: k[j].y, alpha: k[j].alpha, angle: k[j].angle, scale: k[j].scale, dur: k[j + 1].duration, ease: k[j + 1].easing});
+				j--;
+			}
+		}
+		return segs;
+	}
+
 	function startPreview(t:HudTweenData)
 	{
 		var idx:Int = indexOfTarget(t);
@@ -1479,10 +1800,14 @@ class HudEditorState extends MusicBeatState implements PsychUIEventHandler.Psych
 			showOutput('Tween target not found.', true);
 			return;
 		}
+		if (t.keys.length < 2)
+		{
+			showOutput('This tween has fewer than 2 keyframes.', true);
+			return;
+		}
 		stopPreview();
 
 		var m:EditorMetaSprite = items[idx];
-		var s:FlxSprite = m.sprite;
 		previewMeta = m;
 		prevX = m.x;
 		prevY = m.y;
@@ -1491,85 +1816,91 @@ class HudEditorState extends MusicBeatState implements PsychUIEventHandler.Psych
 		prevScaleX = m.scale[0];
 		prevScaleY = m.scale[1];
 
-		if (t.keyframes != null && t.keyframes.length > 1)
+		applyPreviewStart(m, t);
+		previewStep(m, t, buildSegs(t, t.yoyo), 0, true);
+	}
+
+	// parte da A
+	function applyPreviewStart(m:EditorMetaSprite, t:HudTweenData)
+	{
+		var s:FlxSprite = m.sprite;
+		var a:HudKeyframe = t.keys[0];
+		if (t.propX)
+			s.x = a.x;
+		if (t.propY)
+			s.y = a.y;
+		if (t.propAlpha)
+			s.alpha = a.alpha;
+		if (t.propAngle && m.canRotate)
+			s.angle = a.angle;
+		if (t.propScale && m.canScale)
+			s.scale.set(a.scale, a.scale);
+	}
+
+	// Esegue il segmento i; al termine (onComplete) parte il successivo. Loop/yoyo = ricomincia da A.
+	function previewStep(m:EditorMetaSprite, t:HudTweenData, segs:Array<HudSeg>, i:Int, first:Bool)
+	{
+		if (previewMeta != m)
+			return; // anteprima fermata nel frattempo
+
+		if (i >= segs.length)
 		{
-			var first = t.keyframes[0];
-			s.x = first.x; s.y = first.y; s.alpha = first.alpha; s.angle = first.angle;
-			s.scale.set(first.scaleX, first.scaleY);
-			var cumulative:Float = t.delay;
-			for (i in 0...(t.keyframes.length - 1))
+			if (t.loop || t.yoyo)
 			{
-				var k = t.keyframes[i + 1];
-				var duration = k.duration > 0 ? k.duration : t.duration;
-				var values:Dynamic = {};
-				if (t.propX) Reflect.setField(values, 'x', k.x);
-				if (t.propY) Reflect.setField(values, 'y', k.y);
-				if (t.propAlpha) Reflect.setField(values, 'alpha', k.alpha);
-				if (t.propAngle && m.canRotate) Reflect.setField(values, 'angle', k.angle);
-				previewTweens.push(FlxTween.tween(s, values, duration, {ease: easeByName(k.easing), startDelay: cumulative}));
-				if (t.propScale && m.canScale)
-					previewTweens.push(FlxTween.tween(s.scale, {x: k.scaleX, y: k.scaleY}, duration, {ease: easeByName(k.easing), startDelay: cumulative}));
-				cumulative += duration;
+				applyPreviewStart(m, t);
+				previewStep(m, t, segs, 0, false);
 			}
-			previewRestoreTimer = cumulative + 0.6;
+			else
+				previewRestoreTimer = 0.6; // lascio vedere lo stato finale e poi ripristino
 			return;
 		}
 
-		// parte da A
-		if (t.propX)
-			s.x = t.fromX;
-		if (t.propY)
-			s.y = t.fromY;
-		if (t.propAlpha)
-			s.alpha = t.fromAlpha;
-		if (t.propAngle && m.canRotate)
-			s.angle = t.fromAngle;
-		if (t.propScale && m.canScale)
-			s.scale.set(t.fromScale, t.fromScale);
-
-		// 4 = PINGPONG, 2 = LOOPING, 8 = ONESHOT (valori di FlxTweenType)
-		var type:Int = t.yoyo ? 4 : (t.loop ? 2 : 8);
-		function makeOpts(isMain:Bool):Dynamic
-		{
-			return {
-				ease: easeByName(t.easing),
-				startDelay: t.delay,
-				type: type,
-				onComplete: function(_:FlxTween)
-				{
-					if (isMain && type == 8)
-						previewRestoreTimer = 0.6; // lascio vedere lo stato finale e poi ripristino
-				}
-			};
-		}
+		var sg:HudSeg = segs[i];
+		var s:FlxSprite = m.sprite;
+		var delay:Float = (i == 0 && first) ? t.delay : 0.0;
 
 		var vals:Dynamic = {};
 		var has:Bool = false;
 		if (t.propX)
 		{
-			Reflect.setField(vals, 'x', t.toX);
+			Reflect.setField(vals, 'x', sg.x);
 			has = true;
 		}
 		if (t.propY)
 		{
-			Reflect.setField(vals, 'y', t.toY);
+			Reflect.setField(vals, 'y', sg.y);
 			has = true;
 		}
 		if (t.propAlpha)
 		{
-			Reflect.setField(vals, 'alpha', t.toAlpha);
+			Reflect.setField(vals, 'alpha', sg.alpha);
 			has = true;
 		}
 		if (t.propAngle && m.canRotate)
 		{
-			Reflect.setField(vals, 'angle', t.toAngle);
+			Reflect.setField(vals, 'angle', sg.angle);
 			has = true;
 		}
-		if (has)
-			previewTweens.push(FlxTween.tween(s, vals, t.duration, makeOpts(true)));
+		var scl:Bool = t.propScale && m.canScale;
 
-		if (t.propScale && m.canScale)
-			previewTweens.push(FlxTween.tween(s.scale, {x: t.toScale, y: t.toScale}, t.duration, makeOpts(!has)));
+		previewTweens = [for (tw in previewTweens) if (tw != null && tw.active) tw];
+
+		var next:FlxTween->Void = function(_:FlxTween) previewStep(m, t, segs, i + 1, false);
+		function makeOpts(withCallback:Bool):Dynamic
+		{
+			return {
+				ease: easeByName(sg.ease),
+				startDelay: delay,
+				onComplete: withCallback ? next : null
+			};
+		}
+
+		if (scl)
+			previewTweens.push(FlxTween.tween(s.scale, {x: sg.scale, y: sg.scale}, sg.dur, makeOpts(!has)));
+		if (has)
+			previewTweens.push(FlxTween.tween(s, vals, sg.dur, makeOpts(true)));
+		if (!has && !scl)
+			previewTweens.push(FlxTween.num(0, 1, sg.dur, makeOpts(true)));
 	}
 
 	function stopPreview()
@@ -1878,7 +2209,6 @@ class HudEditorState extends MusicBeatState implements PsychUIEventHandler.Psych
 		var animated:Bool = (anims.length > 0);
 
 		var m:EditorMetaSprite = createOverlay(entry.name, anims, animated);
-		m.zIndex = items.length;
 		items.push(m);
 		closePngPicker();
 
@@ -1974,9 +2304,11 @@ class HudEditorState extends MusicBeatState implements PsychUIEventHandler.Psych
 			m.sprite = FlxDestroyUtil.destroy(m.sprite);
 		items = [];
 		hudTweens = [];
+		capKeys = [];
 		selectedIdx = -1;
 		tweenTemplate = new HudTweenData();
 
+		EditorMetaSprite.zCounter = 0;
 		buildTemplate();
 		refreshList();
 		updateSelectedUI();
@@ -2277,42 +2609,18 @@ class HudEditorState extends MusicBeatState implements PsychUIEventHandler.Psych
 	// Righe che AVVIANO il tween n (parte sempre dal valore A, poi va a B)
 	function tweenLines(t:HudTweenData, n:Int):Array<String>
 	{
+		if (t.keys.length < 2)
+			return ['-- tween ' + n + ' (' + t.targetName + '): needs at least 2 keyframes, skipped'];
+		if (t.keys.length > 2)
+			return chainLines(t, n);
+		var a:HudKeyframe = t.keys[0];
+		var b:HudKeyframe = t.keys[1];
 		var L:Array<String> = [];
-		if (t.keyframes != null && t.keyframes.length > 1)
-		{
-			L.push('-- tween chain ' + n + ': ' + t.targetName + ' (' + t.keyframes.length + ' keyframes)');
-			L.push('runHaxeCode([[');
-			L.push('var obj = ' + haxeRef(t) + ';');
-			L.push('if (obj != null) {');
-			var first = t.keyframes[0];
-			L.push('obj.x = ' + hxNum(first.x) + '; obj.y = ' + hxNum(first.y) + '; obj.alpha = ' + hxNum(first.alpha) + '; obj.angle = ' + hxNum(first.angle) + ';');
-			L.push('obj.scale.set(' + hxNum(first.scaleX) + ', ' + hxNum(first.scaleY) + ');');
-			var cumulative:Float = t.delay;
-			for (i in 0...(t.keyframes.length - 1))
-			{
-				var b = t.keyframes[i + 1];
-				var values:Array<String> = [];
-				if (t.propX) values.push('x: ' + hxNum(b.x));
-				if (t.propY) values.push('y: ' + hxNum(b.y));
-				if (t.propAlpha) values.push('alpha: ' + hxNum(b.alpha));
-				if (t.propAngle) values.push('angle: ' + hxNum(b.angle));
-				var dur = (b.duration > 0) ? b.duration : t.duration;
-				var ease = safeEase(b.easing != null ? b.easing : t.easing);
-				if (values.length > 0)
-					L.push('FlxTween.tween(obj, {' + values.join(', ') + '}, ' + hxNum(dur) + ', {ease: FlxEase.' + ease + ', startDelay: ' + hxNum(cumulative) + '});');
-				if (t.propScale && (b.scaleX != first.scaleX || b.scaleY != first.scaleY))
-					L.push('FlxTween.tween(obj.scale, {x: ' + hxNum(b.scaleX) + ', y: ' + hxNum(b.scaleY) + '}, ' + hxNum(dur) + ', {ease: FlxEase.' + ease + ', startDelay: ' + hxNum(cumulative) + '});');
-				cumulative += dur;
-			}
-			L.push('}');
-			L.push(']])');
-			return L;
-		}
-		var doX:Bool = t.propX && differs(t.fromX, t.toX);
-		var doY:Bool = t.propY && differs(t.fromY, t.toY);
-		var doA:Bool = t.propAlpha && differs(t.fromAlpha, t.toAlpha);
-		var doAng:Bool = t.propAngle && differs(t.fromAngle, t.toAngle);
-		var doS:Bool = t.propScale && differs(t.fromScale, t.toScale);
+		var doX:Bool = t.propX && differs(a.x, b.x);
+		var doY:Bool = t.propY && differs(a.y, b.y);
+		var doA:Bool = t.propAlpha && differs(a.alpha, b.alpha);
+		var doAng:Bool = t.propAngle && differs(a.angle, b.angle);
+		var doS:Bool = t.propScale && differs(a.scale, b.scale);
 
 		if (!(doX || doY || doA || doAng || doS))
 		{
@@ -2320,10 +2628,10 @@ class HudEditorState extends MusicBeatState implements PsychUIEventHandler.Psych
 			return L;
 		}
 
-		var ease:String = safeEase(t.easing);
-		var dur:String = luaNum(t.duration);
+		var ease:String = safeEase(b.easing);
+		var dur:String = luaNum(b.duration);
 		var mode:String = t.yoyo ? ', yoyo (ping-pong)' : (t.loop ? ', loop' : '');
-		L.push('-- tween ' + n + ': ' + t.targetName + ' (' + t.easing + ', ' + dur + 's' + (t.delay > 0 ? ', delay ' + luaNum(t.delay) + 's' : '') + mode + ')');
+		L.push('-- tween ' + n + ': ' + t.targetName + ' (' + b.easing + ', ' + dur + 's' + (t.delay > 0 ? ', delay ' + luaNum(t.delay) + 's' : '') + mode + ')');
 
 		var simple:Bool = (t.targetType == 'overlay' && t.delay <= 0 && !t.loop && !t.yoyo);
 		if (simple)
@@ -2333,32 +2641,32 @@ class HudEditorState extends MusicBeatState implements PsychUIEventHandler.Psych
 			var base:String = 'hudTween' + n;
 			if (doX)
 			{
-				L.push('setProperty(' + luaStr(t.targetName + '.x') + ', ' + luaNum(t.fromX) + ')');
-				L.push('doTweenX(' + luaStr(base + '_x') + ', ' + tag + ', ' + luaNum(t.toX) + ', ' + dur + ', ' + luaStr(ease) + ')');
+				L.push('setProperty(' + luaStr(t.targetName + '.x') + ', ' + luaNum(a.x) + ')');
+				L.push('doTweenX(' + luaStr(base + '_x') + ', ' + tag + ', ' + luaNum(b.x) + ', ' + dur + ', ' + luaStr(ease) + ')');
 			}
 			if (doY)
 			{
-				L.push('setProperty(' + luaStr(t.targetName + '.y') + ', ' + luaNum(t.fromY) + ')');
-				L.push('doTweenY(' + luaStr(base + '_y') + ', ' + tag + ', ' + luaNum(t.toY) + ', ' + dur + ', ' + luaStr(ease) + ')');
+				L.push('setProperty(' + luaStr(t.targetName + '.y') + ', ' + luaNum(a.y) + ')');
+				L.push('doTweenY(' + luaStr(base + '_y') + ', ' + tag + ', ' + luaNum(b.y) + ', ' + dur + ', ' + luaStr(ease) + ')');
 			}
 			if (doA)
 			{
-				L.push('setProperty(' + luaStr(t.targetName + '.alpha') + ', ' + luaNum(t.fromAlpha) + ')');
-				L.push('doTweenAlpha(' + luaStr(base + '_a') + ', ' + tag + ', ' + luaNum(t.toAlpha) + ', ' + dur + ', ' + luaStr(ease) + ')');
+				L.push('setProperty(' + luaStr(t.targetName + '.alpha') + ', ' + luaNum(a.alpha) + ')');
+				L.push('doTweenAlpha(' + luaStr(base + '_a') + ', ' + tag + ', ' + luaNum(b.alpha) + ', ' + dur + ', ' + luaStr(ease) + ')');
 			}
 			if (doAng)
 			{
-				L.push('setProperty(' + luaStr(t.targetName + '.angle') + ', ' + luaNum(t.fromAngle) + ')');
-				L.push('doTweenAngle(' + luaStr(base + '_ang') + ', ' + tag + ', ' + luaNum(t.toAngle) + ', ' + dur + ', ' + luaStr(ease) + ')');
+				L.push('setProperty(' + luaStr(t.targetName + '.angle') + ', ' + luaNum(a.angle) + ')');
+				L.push('doTweenAngle(' + luaStr(base + '_ang') + ', ' + tag + ', ' + luaNum(b.angle) + ', ' + dur + ', ' + luaStr(ease) + ')');
 			}
 			if (doS)
 			{
 				// Psych non ha doTweenScale: si tweena x/y dell'oggetto "scale"
 				var sc:String = luaStr(t.targetName + '.scale');
-				L.push('setProperty(' + luaStr(t.targetName + '.scale.x') + ', ' + luaNum(t.fromScale) + ')');
-				L.push('setProperty(' + luaStr(t.targetName + '.scale.y') + ', ' + luaNum(t.fromScale) + ')');
-				L.push('doTweenX(' + luaStr(base + '_sx') + ', ' + sc + ', ' + luaNum(t.toScale) + ', ' + dur + ', ' + luaStr(ease) + ')');
-				L.push('doTweenY(' + luaStr(base + '_sy') + ', ' + sc + ', ' + luaNum(t.toScale) + ', ' + dur + ', ' + luaStr(ease) + ')');
+				L.push('setProperty(' + luaStr(t.targetName + '.scale.x') + ', ' + luaNum(a.scale) + ')');
+				L.push('setProperty(' + luaStr(t.targetName + '.scale.y') + ', ' + luaNum(a.scale) + ')');
+				L.push('doTweenX(' + luaStr(base + '_sx') + ', ' + sc + ', ' + luaNum(b.scale) + ', ' + dur + ', ' + luaStr(ease) + ')');
+				L.push('doTweenY(' + luaStr(base + '_sy') + ', ' + sc + ', ' + luaNum(b.scale) + ', ' + dur + ', ' + luaStr(ease) + ')');
 			}
 			return L;
 		}
@@ -2369,34 +2677,257 @@ class HudEditorState extends MusicBeatState implements PsychUIEventHandler.Psych
 		L.push('\tvar obj = ' + haxeRef(t) + ';');
 		L.push('\tif (obj != null) {');
 		if (doX)
-			L.push('\t\tobj.x = ' + hxNum(t.fromX) + ';');
+			L.push('\t\tobj.x = ' + hxNum(a.x) + ';');
 		if (doY)
-			L.push('\t\tobj.y = ' + hxNum(t.fromY) + ';');
+			L.push('\t\tobj.y = ' + hxNum(a.y) + ';');
 		if (doA)
-			L.push('\t\tobj.alpha = ' + hxNum(t.fromAlpha) + ';');
+			L.push('\t\tobj.alpha = ' + hxNum(a.alpha) + ';');
 		if (doAng)
-			L.push('\t\tobj.angle = ' + hxNum(t.fromAngle) + ';');
+			L.push('\t\tobj.angle = ' + hxNum(a.angle) + ';');
 		if (doS)
 		{
-			L.push('\t\tobj.scale.x = ' + hxNum(t.fromScale) + ';');
-			L.push('\t\tobj.scale.y = ' + hxNum(t.fromScale) + ';');
+			L.push('\t\tobj.scale.x = ' + hxNum(a.scale) + ';');
+			L.push('\t\tobj.scale.y = ' + hxNum(a.scale) + ';');
 		}
 
 		var vals:Array<String> = [];
 		if (doX)
-			vals.push('x: ' + hxNum(t.toX));
+			vals.push('x: ' + hxNum(b.x));
 		if (doY)
-			vals.push('y: ' + hxNum(t.toY));
+			vals.push('y: ' + hxNum(b.y));
 		if (doA)
-			vals.push('alpha: ' + hxNum(t.toAlpha));
+			vals.push('alpha: ' + hxNum(b.alpha));
 		if (doAng)
-			vals.push('angle: ' + hxNum(t.toAngle));
+			vals.push('angle: ' + hxNum(b.angle));
 		if (vals.length > 0)
-			L.push('\t\tFlxTween.tween(obj, {' + vals.join(', ') + '}, ' + hxNum(t.duration) + ', ' + opts + ');');
+			L.push('\t\tFlxTween.tween(obj, {' + vals.join(', ') + '}, ' + hxNum(b.duration) + ', ' + opts + ');');
 		if (doS)
-			L.push('\t\tFlxTween.tween(obj.scale, {x: ' + hxNum(t.toScale) + ', y: ' + hxNum(t.toScale) + '}, ' + hxNum(t.duration) + ', ' + opts + ');');
+			L.push('\t\tFlxTween.tween(obj.scale, {x: ' + hxNum(b.scale) + ', y: ' + hxNum(b.scale) + '}, ' + hxNum(b.duration) + ', ' + opts + ');');
 		L.push('\t}');
 		L.push(']])');
+		return L;
+	}
+
+	// Tween a catena (3+ keyframe): runHaxeCode con FlxTween concatenati via onComplete.
+	// (startDelay cumulativo NON e' affidabile: i valori di partenza verrebbero letti troppo presto.)
+	function chainLines(t:HudTweenData, n:Int):Array<String>
+	{
+		var L:Array<String> = [];
+		var k:Array<HudKeyframe> = t.keys;
+
+		var fx:Bool = false;
+		var fy:Bool = false;
+		var fa:Bool = false;
+		var fang:Bool = false;
+		var fs:Bool = false;
+		for (i in 1...k.length)
+		{
+			if (differs(k[i - 1].x, k[i].x))
+				fx = true;
+			if (differs(k[i - 1].y, k[i].y))
+				fy = true;
+			if (differs(k[i - 1].alpha, k[i].alpha))
+				fa = true;
+			if (differs(k[i - 1].angle, k[i].angle))
+				fang = true;
+			if (differs(k[i - 1].scale, k[i].scale))
+				fs = true;
+		}
+		var fl = {x: t.propX && fx, y: t.propY && fy, a: t.propAlpha && fa, ang: t.propAngle && fang, s: t.propScale && fs};
+
+		if (!(fl.x || fl.y || fl.a || fl.ang || fl.s))
+		{
+			L.push('-- tween ' + n + ' (' + t.targetName + '): no property changes between keyframes, skipped');
+			return L;
+		}
+
+		var loopy:Bool = t.loop || t.yoyo;
+		var mode:String = t.yoyo ? ', yoyo (forward + back, repeated)' : (t.loop ? ', loop (restarts from A)' : '');
+		L.push('-- tween ' + n + ': ' + t.targetName + ' — chain of ' + k.length + ' keyframes' + (t.delay > 0 ? ', delay ' + luaNum(t.delay) + 's' : '') + mode);
+		for (i in 1...k.length)
+			L.push('--   ' + keyName(i - 1) + ' -> ' + keyName(i) + ': ' + luaNum(k[i].duration) + 's ' + safeEase(k[i].easing));
+
+		var segs:Array<HudSeg> = buildSegs(t, t.yoyo);
+		var a:HudKeyframe = k[0];
+
+		L.push('runHaxeCode([[');
+		L.push('\tvar obj = ' + haxeRef(t) + ';');
+		L.push('\tif (obj != null) {');
+		var ind:String = '\t\t';
+		if (loopy)
+		{
+			L.push(ind + 'var run = null;');
+			L.push(ind + 'run = function(first) {');
+			ind += '\t';
+		}
+		// si parte sempre dal valore A
+		if (fl.x)
+			L.push(ind + 'obj.x = ' + hxNum(a.x) + ';');
+		if (fl.y)
+			L.push(ind + 'obj.y = ' + hxNum(a.y) + ';');
+		if (fl.a)
+			L.push(ind + 'obj.alpha = ' + hxNum(a.alpha) + ';');
+		if (fl.ang)
+			L.push(ind + 'obj.angle = ' + hxNum(a.angle) + ';');
+		if (fl.s)
+		{
+			L.push(ind + 'obj.scale.x = ' + hxNum(a.scale) + ';');
+			L.push(ind + 'obj.scale.y = ' + hxNum(a.scale) + ';');
+		}
+		chainSeg(L, segs, 0, ind, fl, t, loopy);
+		if (loopy)
+		{
+			L.push('\t\t};');
+			L.push('\t\trun(true);');
+		}
+		L.push('\t}');
+		L.push(']])');
+		return L;
+	}
+
+	// Un segmento: se non e' l'ultimo (o se c'e' loop) il successivo sta dentro onComplete
+	function chainSeg(L:Array<String>, segs:Array<HudSeg>, i:Int, ind:String, fl:{x:Bool, y:Bool, a:Bool, ang:Bool, s:Bool}, t:HudTweenData, loopy:Bool)
+	{
+		var sg:HudSeg = segs[i];
+		var last:Bool = (i == segs.length - 1);
+		var needCb:Bool = !last || loopy;
+
+		var delayStr:String = '';
+		if (i == 0 && t.delay > 0)
+			delayStr = loopy ? ', startDelay: (first ? ' + hxNum(t.delay) + ' : 0.0)' : ', startDelay: ' + hxNum(t.delay);
+		var optsHead:String = '{ease: FlxEase.' + safeEase(sg.ease) + delayStr;
+		var dur:String = hxNum(sg.dur);
+
+		var vals:Array<String> = [];
+		if (fl.x)
+			vals.push('x: ' + hxNum(sg.x));
+		if (fl.y)
+			vals.push('y: ' + hxNum(sg.y));
+		if (fl.a)
+			vals.push('alpha: ' + hxNum(sg.alpha));
+		if (fl.ang)
+			vals.push('angle: ' + hxNum(sg.angle));
+		var hasObj:Bool = vals.length > 0;
+
+		// chi porta la continuazione: il tween dell'oggetto, altrimenti quello della scala
+		function emit(target:String, valStr:String, withCb:Bool)
+		{
+			var head:String = ind + 'FlxTween.tween(' + target + ', ' + valStr + ', ' + dur + ', ' + optsHead;
+			if (!withCb)
+			{
+				L.push(head + '});');
+				return;
+			}
+			L.push(head + ', onComplete: function(_) {');
+			if (!last)
+				chainSeg(L, segs, i + 1, ind + '\t', fl, t, loopy);
+			else
+				L.push(ind + '\trun(false);');
+			L.push(ind + '}});');
+		}
+
+		if (fl.s)
+			emit('obj.scale', '{x: ' + hxNum(sg.scale) + ', y: ' + hxNum(sg.scale) + '}', needCb && !hasObj);
+		if (hasObj)
+			emit('obj', '{' + vals.join(', ') + '}', needCb);
+	}
+
+	// ---------------------------------------------------------------
+	// Draw order GLOBALE. Strategia (Psych 1.0.x: comboGroup < noteGroup < uiGroup, nell'ordine fisso di PlayState):
+	//  - overlay e comboGroup sono membri diretti di PlayState: si piazzano con setObjectOrder subito
+	//    DOPO l'ultimo contenitore/oggetto che devono stare sopra (hudPlaceAfter, indici ricalcolati a runtime);
+	//  - healthBar/scoreTxt/timeTxt/timeBar stanno in uiGroup: si rimescolano tra i LORO slot (icone e
+	//    botplayTxt restano dove sono);
+	//  - gli strum stanno in noteGroup (indice strumLineNotes.members[i] da non toccare): contano come
+	//    ancora "noteGroup", non si riordinano tra loro.
+	// Se nessuno zIndex e' stato cambiato rispetto al default non emette NIENTE.
+	// ---------------------------------------------------------------
+	function drawOrderLines():Array<String>
+	{
+		var L:Array<String> = [];
+		var changed:Bool = false;
+		for (m in items)
+			if (m.zIndex != m.defaultZ)
+			{
+				changed = true;
+				break;
+			}
+		if (!changed)
+			return L;
+
+		var sorted:Array<EditorMetaSprite> = sortedItems();
+		L.push('-- DRAW ORDER (globale, dal fondo al top):');
+		for (i => m in sorted)
+			L.push('--   ' + (i + 1) + '. ' + m.name + ' (zIndex ' + m.zIndex + ')');
+
+		L.push('local function hudPlaceAfter(tag, anchors)');
+		L.push('\tif #anchors == 0 then');
+		L.push('\t\tsetObjectOrder(tag, 0)');
+		L.push('\t\treturn');
+		L.push('\tend');
+		L.push('\tlocal top = -1');
+		L.push('\tfor _, a in ipairs(anchors) do');
+		L.push('\t\tlocal idx = getObjectOrder(a)');
+		L.push('\t\tif idx > top then top = idx end');
+		L.push('\tend');
+		L.push('\tif top < 0 then return end');
+		L.push('\tif getObjectOrder(tag) < top then');
+		L.push('\t\tsetObjectOrder(tag, top) -- rimuovendo tag, l\'ancora scala di 1');
+		L.push('\telse');
+		L.push('\t\tsetObjectOrder(tag, top + 1)');
+		L.push('\tend');
+		L.push('end');
+
+		var seen:Array<String> = [];
+		var lastMovable:String = null;
+		var uiNow:Array<String> = [];
+		for (m in sorted)
+		{
+			var container:String = switch (m.type)
+			{
+				case 'strum': 'noteGroup';
+				case 'overlay', 'combo': null;
+				default: 'uiGroup';
+			}
+			if (container != null)
+			{
+				if (!seen.contains(container))
+					seen.push(container);
+				if (container == 'uiGroup')
+					uiNow.push(m.name);
+				continue;
+			}
+			var tag:String = (m.type == 'combo') ? 'comboGroup' : m.name;
+			var anchors:Array<String> = seen.copy();
+			if (lastMovable != null)
+				anchors.push(lastMovable);
+			L.push('hudPlaceAfter(' + luaStr(tag) + ', {' + [for (a in anchors) luaStr(a)].join(', ') + '})');
+			lastMovable = tag;
+		}
+
+		// widget di uiGroup: rimescolo solo se il loro ordine relativo e' cambiato
+		var uiDef:Array<String> = [];
+		var byDef:Array<EditorMetaSprite> = [for (m in items) if (m.type == 'healthbar' || m.type == 'scoreText' || m.type == 'timeText' || m.type == 'timeBar') m];
+		byDef.sort(function(a:EditorMetaSprite, b:EditorMetaSprite):Int return a.defaultZ - b.defaultZ);
+		for (m in byDef)
+			uiDef.push(m.name);
+		if (uiNow.join(',') != uiDef.join(','))
+		{
+			L.push('runHaxeCode([[');
+			L.push('\tvar g = PlayState.instance;');
+			L.push('\tvar grp = g.uiGroup;');
+			L.push('\tif (grp != null) {');
+			L.push('\t\tvar objs = [];');
+			L.push('\t\tfor (o in [' + [for (n in uiNow) 'g.' + n].join(', ') + ']) {');
+			L.push('\t\t\tif (o != null && grp.members.indexOf(o) >= 0) objs.push(o);');
+			L.push('\t\t}');
+			L.push('\t\tvar slots = [];');
+			L.push('\t\tfor (o in objs) slots.push(grp.members.indexOf(o));');
+			L.push('\t\tslots.sort(function(a, b) return a - b);');
+			L.push('\t\tfor (i in 0...objs.length) grp.members[slots[i]] = objs[i];');
+			L.push('\t}');
+			L.push(']])');
+		}
 		return L;
 	}
 
@@ -2426,6 +2957,14 @@ class HudEditorState extends MusicBeatState implements PsychUIEventHandler.Psych
 		out.push("--   Incolla DOPO le tue modifiche se vuoi che l'editor abbia");
 		out.push("--   l'ultima parola, PRIMA se vuoi che le tue vincano.");
 		out.push("--");
+		out.push("-- DRAW ORDER:");
+		out.push("--   L'ordine di disegno (zIndex) e' GLOBALE: una sola lista per tutto l'HUD,");
+		out.push("--   NON per categoria (strum, widget e overlay si possono interlacciare).");
+		out.push("--   Il codice emesso usa setObjectOrder per overlay e comboGroup e rimescola");
+		out.push("--   healthBar/scoreTxt/timeTxt/timeBar dentro uiGroup. Limite: noteGroup (strum+note),");
+		out.push("--   uiGroup e comboGroup restano nell'ordine fisso di Psych; gli strum non si");
+		out.push("--   riordinano tra loro (romperebbe strumLineNotes.members[i]).");
+		out.push("--");
 		out.push("-- VERSIONE: testato su Psych 1.0.x vanilla. runHaxeCode per i");
 		out.push("-- widget nativi richiede HScript abilitato. I nomi interni");
 		out.push("-- (strumLineNotes, healthBar, ecc.) possono cambiare tra fork.");
@@ -2442,13 +2981,14 @@ class HudEditorState extends MusicBeatState implements PsychUIEventHandler.Psych
 		out.push("--     definizione di ogni funzione: copia i CORPI dentro le tue funzioni invece di incollare le funzioni intere.");
 		out.push("--   * Un file " + song + "_hud.lua in data/songs/" + song + "/ viene caricato da Psych in automatico (non serve addLuaScript).");
 		out.push("--   * Il tween parte sempre dal valore A (impostato subito prima del tween) e arriva a B.");
-		out.push("--   * Draw order GLOBALE (non per-categoria): zIndex determina la sovrapposizione tra strum, widget e overlay.");
+		out.push("--   * Tween a catena (3+ keyframe): runHaxeCode con FlxTween concatenati via onComplete; loop = riparte da A,");
+		out.push("--     yoyo = andata + ritorno ripetuti. Durata/easing sono per segmento.");
+		out.push("--   * Draw order: emesso solo se hai cambiato qualche zIndex rispetto al default (vedi DRAW ORDER nell'header).");
 		out.push("--   * comboGroup: i valori x/y sono uno SPOSTAMENTO rispetto alla posizione normale (il gruppo parte da 0,0).");
 		out.push("");
 
 		// ---- Overlay (function onCreate) ----
 		var overlays:Array<EditorMetaSprite> = [for (m in items) if (m.type == 'overlay') m];
-		overlays.sort((a, b) -> a.zIndex - b.zIndex);
 		if (overlays.length > 0)
 		{
 			out.push("-- ------------------------------------------------------------");
@@ -2483,8 +3023,6 @@ class HudEditorState extends MusicBeatState implements PsychUIEventHandler.Psych
 						out.push("\tplayAnim(" + tag + ", " + luaStr(m.firstAnimation) + ", true)");
 				}
 				out.push("\taddLuaSprite(" + tag + ", true)");
-				out.push("\tsetObjectOrder(" + tag + ", " + m.zIndex + ")");
-				out.push("\tsetObjectOrder(" + tag + ", " + m.zIndex + ")");
 				out.push("");
 			}
 			out.push("end");
@@ -2572,12 +3110,15 @@ class HudEditorState extends MusicBeatState implements PsychUIEventHandler.Psych
 		}
 
 		// ---- onCreatePost ----
-		if (createPostStatic.length > 0 || flags.length > 0 || createPostTweens.length > 0)
+		var orderLines:Array<String> = drawOrderLines();
+		if (createPostStatic.length > 0 || flags.length > 0 || createPostTweens.length > 0 || orderLines.length > 0)
 		{
 			out.push("-- ------------------------------------------------------------");
 			out.push("-- POSIZIONI STATICHE (solo cio' che differisce dal default)");
 			out.push("-- ------------------------------------------------------------");
 			out.push("function onCreatePost()");
+			for (l in orderLines)
+				out.push("\t" + l);
 			for (l in createPostStatic)
 				out.push("\t" + l);
 			if (flags.length > 0)
@@ -2599,7 +3140,7 @@ class HudEditorState extends MusicBeatState implements PsychUIEventHandler.Psych
 		}
 
 		// ---- onCountdownStarted (gli strum esistono solo qui) ----
-		if (countdownStatic.length > 0 || countdownTweens.length > 0 || items.length > 0)
+		if (countdownStatic.length > 0 || countdownTweens.length > 0)
 		{
 			out.push("-- Gli strum vengono creati in startCountdown(), DOPO onCreatePost:");
 			out.push("-- per questo le loro posizioni stanno qui.");
@@ -2608,29 +3149,6 @@ class HudEditorState extends MusicBeatState implements PsychUIEventHandler.Psych
 				out.push("\t" + l);
 			for (l in countdownTweens)
 				out.push(l);
-			out.push("");
-			out.push("\t-- Riordino globale: native HUD + overlay nello stesso stack di PlayState.members.");
-			out.push("\trunHaxeCode([[");
-			var orderedHud:Array<EditorMetaSprite> = items.copy();
-			orderedHud.sort((a, b) -> a.zIndex - b.zIndex);
-			var orderVars:Array<String> = [];
-			var orderVar:Int = 0;
-			for (m in orderedHud)
-			{
-				var ref = (m.type == 'strum') ? "PlayState.instance.strumLineNotes.members[" + m.targetIndex + "]" : (m.type == 'overlay' ? "PlayState.instance.modchartSprites.get('" + m.name + "')" : "PlayState.instance." + m.name);
-				var objVar = "hudObj" + orderVar++;
-				orderVars.push(objVar);
-				out.push("var " + objVar + " = " + ref + ";");
-			}
-			out.push("var hudBase = PlayState.instance.members.length;");
-			for (objVar in orderVars)
-				out.push("if (" + objVar + " != null) hudBase--;");
-			out.push("var hudPos = 0;");
-			for (objVar in orderVars)
-			{
-				out.push("if (" + objVar + " != null) { PlayState.instance.remove(" + objVar + ", false); PlayState.instance.insert(hudBase + hudPos, " + objVar + "); hudPos++; }");
-			}
-			out.push("]])");
 			out.push("end");
 			out.push("");
 		}
@@ -2669,7 +3187,7 @@ class HudEditorState extends MusicBeatState implements PsychUIEventHandler.Psych
 			out.push("");
 		}
 
-		if (overlays.length < 1 && createPostStatic.length < 1 && countdownStatic.length < 1 && hudTweens.length < 1)
+		if (overlays.length < 1 && createPostStatic.length < 1 && countdownStatic.length < 1 && hudTweens.length < 1 && orderLines.length < 1)
 			out.push("-- (nessuna modifica: l'HUD e' ai valori di default)");
 
 		return out.join('\n');
@@ -2733,7 +3251,7 @@ class HudEditorState extends MusicBeatState implements PsychUIEventHandler.Psych
 			}
 			if (tweenCaptureActive)
 			{
-				finishTweenCapture();
+				finishTweenCapture(); // ESC chiude la catena (il click destro la annulla)
 				return;
 			}
 			if (previewMeta != null)
@@ -2754,23 +3272,9 @@ class HudEditorState extends MusicBeatState implements PsychUIEventHandler.Psych
 		if (FlxG.keys.justPressed.F1)
 			helpBg.visible = helpTexts.visible = !helpBg.visible;
 
-		if (#if FLX_DEBUG FlxG.keys.justPressed.F3 #else FlxG.keys.justPressed.F2 #end)
-		{
-			UI_box.visible = !UI_box.visible;
-			UI_box.active = !UI_box.active;
-			spriteList_box.visible = spriteListRadioGroup.visible = UI_box.visible;
-			spriteList_box.active = spriteListRadioGroup.active = UI_box.active;
-			spriteListRadioGroup.updateRadioItems();
-		}
-
-		if (FlxG.keys.justPressed.H)
-		{
-			var visible = !(UI_box.visible && spriteList_box.visible);
-			UI_box.visible = UI_box.active = visible;
-			spriteList_box.visible = spriteList_box.active = visible;
-			spriteListRadioGroup.visible = spriteListRadioGroup.active = visible;
-			spriteListRadioGroup.updateRadioItems();
-		}
+		// H (solo fuori dai textfield: sopra c'e' gia' il return su PsychUIInputText.focusOn) come F2/F3
+		if (#if FLX_DEBUG FlxG.keys.justPressed.F3 #else FlxG.keys.justPressed.F2 #end || FlxG.keys.justPressed.H)
+			togglePanels();
 
 		if (FlxG.keys.justPressed.F12)
 			showSelectionQuad = !showSelectionQuad;
@@ -2834,6 +3338,16 @@ class HudEditorState extends MusicBeatState implements PsychUIEventHandler.Psych
 		}
 	}
 
+	// Mostra/nasconde i pannelli (Setting/Object/Tween + lista). Sprite e selezione restano visibili.
+	function togglePanels()
+	{
+		UI_box.visible = !UI_box.visible;
+		UI_box.active = !UI_box.active;
+		spriteList_box.visible = spriteListRadioGroup.visible = UI_box.visible;
+		spriteList_box.active = spriteListRadioGroup.active = UI_box.active;
+		spriteListRadioGroup.updateRadioItems();
+	}
+
 	function moveObjectTo(m:EditorMetaSprite, newX:Float, newY:Float)
 	{
 		m.x = newX;
@@ -2877,7 +3391,7 @@ class HudEditorState extends MusicBeatState implements PsychUIEventHandler.Psych
 				return 1;
 			if (a.area != b.area)
 				return a.area < b.area ? -1 : 1;
-			return items[b.index].zIndex - items[a.index].zIndex; // a parita' di area vince quello disegnato sopra
+			return items[b.index].zIndex - items[a.index].zIndex; // a parita' di area vince quello disegnato sopra (zIndex)
 		});
 		return [for (f in found) f.index];
 	}
@@ -2925,18 +3439,19 @@ class HudEditorState extends MusicBeatState implements PsychUIEventHandler.Psych
 
 		if (ctrl && FlxG.mouse.justPressed && !isMouseOverUI())
 		{
-			// secondo Ctrl+click durante una cattura = punto B
+			// Ctrl+click durante una cattura = salva il keyframe successivo (B, C, D...) e RESTA in cattura.
+			// Il drag riparte da qui, cosi' si puo' trascinare subito verso il keyframe dopo.
 			if (tweenCaptureActive)
 			{
-				var cm = tweenCaptureTarget;
-				var kf = new HudTweenKeyframe(cm.x, cm.y, cm.alpha, cm.angle, cm.scale[0], cm.scale[1]);
-				kf.duration = tweenTemplate.duration; kf.easing = tweenTemplate.easing;
-				captureKeyframes.push(kf);
-				dragSprite = cm;
-				dragMoved = false;
-				dragPosX = FlxG.mouse.screenX - cm.x;
-				dragPosY = FlxG.mouse.screenY - cm.y;
-				showOutput('Keyframe ' + (captureKeyframes.length) + ' saved. Move to the next point, Ctrl+click again or Finish.');
+				addCaptureKeyframe();
+				var capTarget:EditorMetaSprite = tweenCaptureTarget;
+				if (capTarget != null)
+				{
+					dragSprite = capTarget;
+					dragMoved = false;
+					dragPosX = FlxG.mouse.screenX - capTarget.x;
+					dragPosY = FlxG.mouse.screenY - capTarget.y;
+				}
 				return;
 			}
 
@@ -2987,20 +3502,17 @@ class HudEditorState extends MusicBeatState implements PsychUIEventHandler.Psych
 	{
 		if (persistentDraw || subState == null)
 		{
-			var drawItems = items.copy();
-			drawItems.sort((a, b) -> a.zIndex - b.zIndex);
-			for (m in drawItems)
+			for (m in sortedItems())
 				if (m.sprite != null && m.sprite.visible)
 					m.draw();
 
-			// ghost tratteggiato nella posizione A durante la cattura
+			// ghost tratteggiati nelle posizioni dei keyframe gia' catturati (A, B, C...)
 			if (tweenCaptureActive && tweenCaptureTarget != null)
 			{
 				var tm:EditorMetaSprite = tweenCaptureTarget;
 				var gr = tm.getRect();
-				var gx:Float = gr.x + (tweenCaptureFromX - tm.x);
-				var gy:Float = gr.y + (tweenCaptureFromY - tm.y);
-				drawOutline(gx, gy, gr.w, gr.h, FlxColor.CYAN, 0.9, 2, true);
+				for (gk in capKeys)
+					drawOutline(gr.x + (gk.x - tm.x), gr.y + (gk.y - tm.y), gr.w, gr.h, FlxColor.CYAN, 0.9, 2, true);
 				drawOutline(gr.x, gr.y, gr.w, gr.h, FlxColor.YELLOW, 0.9, 2, false);
 			}
 			else if (showSelectionQuad)
@@ -3069,19 +3581,8 @@ class HudEditorState extends MusicBeatState implements PsychUIEventHandler.Psych
 	}
 }
 
-class HudTweenKeyframe
-{
-	public var x:Float; public var y:Float; public var alpha:Float; public var angle:Float;
-	public var scaleX:Float; public var scaleY:Float;
-	public var duration:Float = 1.0; public var easing:String = 'quadInOut';
-	public function new(x:Float, y:Float, alpha:Float, angle:Float, scaleX:Float, scaleY:Float)
-	{ this.x=x; this.y=y; this.alpha=alpha; this.angle=angle; this.scaleX=scaleX; this.scaleY=scaleY; }
-	public function sameAs(o:HudTweenKeyframe):Bool
-		return x == o.x && y == o.y && alpha == o.alpha && angle == o.angle && scaleX == o.scaleX && scaleY == o.scaleY;
-}
-
 // =======================================================================
-// Dati del tween (A -> B singolo per target)
+// Dati del tween: catena ordinata di keyframe (A, B, C...) per target
 // =======================================================================
 class HudTweenData
 {
@@ -3089,25 +3590,16 @@ class HudTweenData
 	public var targetName:String = ''; // "strum_0" | nome overlay | "healthBar" ecc.
 	public var targetIndex:Int = -1; // per gli strum: indice in strumLineNotes.members
 
-	public var keyframes:Array<HudTweenKeyframe> = [];
-
 	public var propX:Bool = true;
 	public var propY:Bool = true;
 	public var propAlpha:Bool = false;
 	public var propAngle:Bool = false;
 	public var propScale:Bool = false;
 
-	public var fromX:Float = 0;
-	public var fromY:Float = 0;
-	public var toX:Float = 0;
-	public var toY:Float = 0;
-	public var fromAlpha:Float = 1;
-	public var toAlpha:Float = 1;
-	public var fromAngle:Float = 0;
-	public var toAngle:Float = 0;
-	public var fromScale:Float = 1; // scala uniforme (x = y)
-	public var toScale:Float = 1;
+	// Catena ordinata di keyframe (minimo 2). Il segmento i-1 -> i usa duration/easing del keyframe i.
+	public var keys:Array<HudKeyframe> = [];
 
+	// Default per i NUOVI segmenti (i valori reali stanno nei keyframe)
 	public var duration:Float = 1.0;
 	public var delay:Float = 0.0;
 	public var easing:String = 'quadInOut';
@@ -3138,6 +3630,33 @@ class HudTweenData
 	}
 }
 
+// Un keyframe: stato dell'elemento + durata/easing del segmento che ARRIVA a questo keyframe
+// (per il primo keyframe, A, duration/easing non sono usati)
+class HudKeyframe
+{
+	public var x:Float = 0;
+	public var y:Float = 0;
+	public var alpha:Float = 1;
+	public var angle:Float = 0;
+	public var scale:Float = 1; // scala uniforme (x = y)
+	public var duration:Float = 1.0;
+	public var easing:String = 'quadInOut';
+
+	public function new() {}
+}
+
+// Segmento "piatto" per preview ed export (include i segmenti di ritorno dello yoyo)
+typedef HudSeg =
+{
+	var x:Float;
+	var y:Float;
+	var alpha:Float;
+	var angle:Float;
+	var scale:Float;
+	var dur:Float;
+	var ease:String;
+}
+
 typedef HudPngEntry =
 {
 	var name:String; // percorso relativo a mods/images, senza estensione
@@ -3154,8 +3673,12 @@ class EditorMetaSprite
 	public var type:String;
 	public var name:String;
 	public var targetIndex:Int = -1;
-	public var zIndex:Int = 0;
 	public var isGroup:Bool = false;
+
+	// Draw order GLOBALE: default = ordine di creazione (comportamento invariato)
+	public static var zCounter:Int = 0;
+	public var zIndex:Int = 0;
+	public var defaultZ:Int = 0;
 
 	public var canScale:Bool = true;
 	public var canRotate:Bool = true;
@@ -3244,6 +3767,7 @@ class EditorMetaSprite
 		this.name = name;
 		this.sprite = spr;
 		this.isGroup = isGroup;
+		this.zIndex = this.defaultZ = zCounter++;
 
 		switch (type)
 		{
