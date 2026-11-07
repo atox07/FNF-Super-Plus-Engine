@@ -2,58 +2,62 @@ package states.editors;
 
 /*
  * ============================================================================
- * HudEditorState — editor visuale dell'HUD (solo camHUD)
+ * HudEditorState — visual HUD editor (camHUD only)
  * ============================================================================
  *
- * Copia-adatta il pattern di StageEditorState (che NON viene toccato).
- * Tutto vive in camHUD (zoom 1, scroll 0): non esiste camGame.
+ * Adapted from the StageEditorState pattern (which is NOT touched).
+ * Everything lives in camHUD (zoom 1, scroll 0): there is no camGame.
  *
- * COSA ESPORTA
- *   - overlay PNG importati dall'utente  -> function onCreate()
- *   - widget nativi/strum SPOSTATI       -> solo il diff rispetto al default
- *   - tween a CATENA (keyframe A->B->C...) per target -> onBeatHit / onStepHit / ecc.
- *   - ordine di disegno (zIndex GLOBALE)  -> setObjectOrder / rimescolo in uiGroup
+ * WHAT IT EXPORTS
+ *   - PNG overlays imported by the user  -> function onCreate()
+ *   - moved native widgets/strums        -> only the diff against the default
+ *   - CHAIN tweens (keyframes A->B->C...) per target -> onBeatHit / onStepHit / etc.
+ *   - draw order (GLOBAL zIndex)         -> setObjectOrder / reshuffle inside uiGroup
  *
- * NOTE SU QUESTO FORK (verificate leggendo PlayState.hx / StrumNote.hx):
- *   - Solo 4K: generateStaticArrows() fa "for (i in 0...4)".
- *   - strumLineNotes: opponent = indici 0-3, player = indici 4-7.
- *   - Gli strum nascono in startCountdown(), DOPO onCreatePost:
- *     le posizioni statiche degli strum finiscono in onCountdownStarted().
- *   - Widget reali: healthBar, scoreTxt (contiene score+misses+rating),
- *     timeBar, timeTxt, comboGroup. NON esistono missesTxt/accuracyTxt/
- *     timeBarBG/albumArt, quindi non sono nel template.
- *   - Le icone (iconP1/iconP2) seguono healthBar ogni frame: non spostabili.
- *   - healthBar/timeBar/comboGroup sono gruppi: niente scale/angle (il gioco
- *     non li gestisce bene). comboGroup: solo posizione statica, NIENTE tween.
+ * NOTES ON THIS FORK (verified by reading PlayState.hx / StrumNote.hx):
+ *   - 4K only: generateStaticArrows() does "for (i in 0...4)".
+ *   - strumLineNotes: opponent = indices 0-3, player = indices 4-7.
+ *   - Strums are created in startCountdown(), AFTER onCreatePost:
+ *     the static strum positions go in onCountdownStarted().
+ *   - Real widgets: healthBar, scoreTxt (holds score+misses+rating),
+ *     timeBar, timeTxt, comboGroup. missesTxt/accuracyTxt/
+ *     timeBarBG/albumArt do NOT exist, so they are not in the template.
+ *   - Icons (iconP1/iconP2) follow healthBar every frame: they cannot be moved.
+ *   - healthBar/timeBar/comboGroup are groups: no scale/angle (the game does not
+ *     handle them well). comboGroup: static position only, NO tween.
  *
- * TWEEN: modalita' cattura
- *   - Checkbox "Tween Capture Mode" (tasto T) nel tab Tween.
- *   - ON : Ctrl+click su elemento = registra il keyframe A e inizia il drag.
- *          Ctrl+click di nuovo = salva il keyframe successivo (B, C, D...) e RESTA
- *          in cattura. ESC o bottone Finish = chiude la catena (la posizione
- *          corrente diventa l'ultimo keyframe se diversa dall'ultimo salvato),
- *          crea il tween e l'elemento TORNA ad A.
- *          Click destro (senza trascinare) = annulla tutta la cattura.
- *   - Durata/easing sono PER SEGMENTO (si scelgono dalla lista keyframe del tab Tween).
- *     Con 2 keyframe l'export e' identico al vecchio A->B.
+ * TWEEN: capture mode
+ *   - "Tween Capture Mode" checkbox (T key) in the Tween tab.
+ *   - ON : Ctrl+click on an element = records keyframe A and starts the drag.
+ *          Ctrl+click again = saves the next keyframe (B, C, D...) and STAYS
+ *          in capture. ESC or the Finish button = closes the chain (the current
+ *          position becomes the last keyframe if it differs from the last saved one),
+ *          creates the tween and the element RETURNS to A.
+ *          Right click (without dragging) = cancels the whole capture.
+ *   - Duration/easing are PER SEGMENT (picked from the keyframe list in the Tween tab).
+ *     With 2 keyframes the export is identical to the old A->B.
  *
- * DRAW ORDER: ogni elemento ha uno zIndex (default = ordine di creazione). Tab Object:
- *   Move Up / Move Down (accanto al box Elements) e Bring to Front / Send to Back (tab Object). L'ordine e' GLOBALE.
- *   - OFF: Ctrl+drag sposta l'elemento in modo statico (come lo Stage Editor).
+ * DRAW ORDER: every element has a zIndex (default = creation order). The Elements list is
+ *   sorted by zIndex (top = front). Move Up / Move Down (next to the Elements box) and
+ *   Bring to Front / Send to Back (Object tab). The order is GLOBAL.
+ *   - OFF: Ctrl+drag moves the element statically (like the Stage Editor).
  *
- * ESEMPIO DI OUTPUT (1 overlay + 1 strum spostato + 1 tween al beat 16)
- * (l'header completo e' sempre quello obbligatorio; qui e' abbreviato)
+ * GROUPS: "G|" entries at the top of the list (Strums Opponent / Boyfriend / All).
+ *   The Group tab moves, scales, rotates and changes the opacity of all members together.
+ *
+ * EXAMPLE OUTPUT (1 overlay + 1 moved strum + 1 tween at beat 16)
+ * (the full header is always the required one; it is abbreviated here)
  * ----------------------------------------------------------------------------
  *   -- ============================================================
  *   -- HUD Layout — generated by Psych Engine HUD Editor
  *   -- Song: my-song
- *   -- ... (header completo come da specifica) ...
+ *   -- ... (full header as per the spec) ...
  *   -- ============================================================
  *
- *   -- Modalita' assunta: downscroll=false, middlescroll=false, 4K
+ *   -- Assumed mode: downscroll=false, middlescroll=false, 4K
  *
  *   -- ------------------------------------------------------------
- *   -- OVERLAY IMPORTATI
+ *   -- IMPORTED OVERLAYS
  *   -- ------------------------------------------------------------
  *   function onCreate()
  *       -- overlay: logo
@@ -64,24 +68,24 @@ package states.editors;
  *   end
  *
  *   -- ------------------------------------------------------------
- *   -- POSIZIONI STATICHE (solo cio' che differisce dal default)
+ *   -- STATIC POSITIONS (only what differs from the default)
  *   -- ------------------------------------------------------------
  *   function onCreatePost()
- *       -- flag one-shot per i tween
+ *       -- one-shot flag for the tweens
  *       __hudTween1_done = false
  *   end
  *
- *   -- Gli strum esistono solo dopo startCountdown(): onCountdownStarted
+ *   -- Strums only exist after startCountdown(): onCountdownStarted
  *   function onCountdownStarted()
  *       setPropertyFromGroup('strumLineNotes', 4, 'x', 700)
  *       defaultPlayerStrumX0 = 700
  *   end
  *
  *   -- ------------------------------------------------------------
- *   -- TWEEN
+ *   -- TWEENS
  *   -- ------------------------------------------------------------
  *   function onBeatHit()
- *       -- tween 1: strum_4 (da (700, 50) a (500, 200))
+ *       -- tween 1: strum_4 (from (700, 50) to (500, 200))
  *       if curBeat == 16 and not __hudTween1_done then
  *           __hudTween1_done = true
  *           runHaxeCode([[
@@ -115,33 +119,35 @@ import states.PlayState;
 class HudEditorState extends MusicBeatState implements PsychUIEventHandler.PsychUIEvent
 {
 	// -------------------------------------------------------------------
-	// Stato generale
+	// General state
 	// -------------------------------------------------------------------
 	public var camHUD:FlxCamera;
 
-	var items:Array<EditorMetaSprite> = []; // strums + widget + overlay (ordine di disegno)
+	var items:Array<EditorMetaSprite> = []; // strums + widgets + overlays (draw order)
 	var hudTweens:Array<HudTweenData> = [];
-	var tweenTemplate:HudTweenData = new HudTweenData(); // impostazioni usate alla creazione di un nuovo tween
+	var tweenTemplate:HudTweenData = new HudTweenData(); // settings used when creating a new tween
 	var selectedIdx:Int = -1;
+	var selectedGroup:Int = -1; // -1 = no group; otherwise index into groupNames
+	final groupNames:Array<String> = ['Strums Opponent', 'Strums Boyfriend', 'Strums All'];
 
 	var downscroll:Bool = false;
 	var middlescroll:Bool = false;
 	var songName:String = 'song';
 	var unsavedProgress:Bool = false;
-	var uiUpdating:Bool = false; // true mentre aggiorno la UI da codice (evita loop di callback)
+	var uiUpdating:Bool = false; // true while the UI is updated from code (avoids callback loops)
 
 	// UI
 	var UI_box:PsychUIBox;
 	var spriteList_box:PsychUIBox;
 	var spriteListRadioGroup:PsychUIRadioGroup;
-	var listRefs:Array<{kind:Int, idx:Int}> = []; // kind 0 = elemento, 1 = tween
+	var listRefs:Array<{kind:Int, idx:Int}> = []; // kind 0 = element, 1 = tween, 2 = group
 	var helpBg:FlxSprite;
 	var helpTexts:FlxSpriteGroup;
 	var outputTxt:FlxText;
 	var infoTxt:FlxText;
 	var outputTime:Float = 0;
 
-	// Disegno helper (outline di selezione / ghost)
+	// Drawing helper (selection outline / ghost)
 	var linePx:FlxSprite;
 
 	// Mouse / drag
@@ -161,15 +167,15 @@ class HudEditorState extends MusicBeatState implements PsychUIEventHandler.Psych
 	var pickCycle:Int = 0;
 
 	// -------------------------------------------------------------------
-	// Cattura tween a catena (Ctrl+click = A, poi B, C, D... ; ESC/Finish chiude)
+	// Chained tween capture (Ctrl+click = A, then B, C, D... ; ESC/Finish closes)
 	// -------------------------------------------------------------------
 	var tweenCaptureMode:Bool = false;
 	var tweenCaptureActive:Bool = false;
 	var tweenCaptureTarget:EditorMetaSprite = null;
-	var capKeys:Array<HudKeyframe> = []; // keyframe catturati finora (il primo = A)
-	var capFromScaleX:Float = 1; // scala X/Y di A (per il ritorno; i keyframe hanno scala uniforme)
+	var capKeys:Array<HudKeyframe> = []; // keyframes captured so far (the first = A)
+	var capFromScaleX:Float = 1; // scale X/Y of A (for the return; keyframes have uniform scale)
 	var capFromScaleY:Float = 1;
-	var tweenKeySel:Int = 0; // keyframe selezionato nel tab Tween
+	var tweenKeySel:Int = 0; // keyframe selected in the Tween tab
 
 	// Preview
 	var previewMeta:EditorMetaSprite = null;
@@ -183,14 +189,14 @@ class HudEditorState extends MusicBeatState implements PsychUIEventHandler.Psych
 	var prevScaleY:Float;
 
 	// -------------------------------------------------------------------
-	// Costruzione
+	// Construction
 	// -------------------------------------------------------------------
 	override function create()
 	{
 		Paths.clearStoredMemory();
 		Paths.clearUnusedMemory();
 
-		// SOLO camHUD: e' la camera di default dello state (zoom 1, scroll 0, fissa)
+		// ONLY camHUD: it is the state's default camera (zoom 1, scroll 0, fixed)
 		camHUD = initPsychCamera();
 		camHUD.bgColor = 0xFF1B1B22;
 		camHUD.zoom = 1;
@@ -228,11 +234,11 @@ class HudEditorState extends MusicBeatState implements PsychUIEventHandler.Psych
 	}
 
 	// -------------------------------------------------------------------
-	// Template HUD: widget VERI con placeholder (nessuna logica simulata)
+	// HUD template: REAL widgets with placeholders (no simulated logic)
 	// -------------------------------------------------------------------
 	function buildTemplate()
 	{
-		// 8 strum: 0-3 opponent, 4-7 player (stesso ordine di PlayState.strumLineNotes)
+		// 8 strums: 0-3 opponent, 4-7 player (same order as PlayState.strumLineNotes)
 		for (i in 0...8)
 		{
 			var player:Int = (i >= 4) ? 1 : 0;
@@ -243,7 +249,7 @@ class HudEditorState extends MusicBeatState implements PsychUIEventHandler.Psych
 			applyDefaultPosition(m);
 		}
 
-		// healthBar (stessa firma di PlayState: Bar(x, y, 'healthBar', valueFunction, min, max))
+		// healthBar (same signature as PlayState: Bar(x, y, 'healthBar', valueFunction, min, max))
 		var hb:Bar = new Bar(0, 0, 'healthBar', function() return 1.0, 0, 2);
 		hb.leftToRight = false;
 		hb.setColors(FlxColor.RED, FlxColor.LIME);
@@ -270,7 +276,7 @@ class HudEditorState extends MusicBeatState implements PsychUIEventHandler.Psych
 		items.push(mTimeTxt);
 		applyDefaultPosition(mTimeTxt);
 
-		// timeBar (dipende da timeTxt per la Y: va creata DOPO)
+		// timeBar (its Y depends on timeTxt: it must be created AFTER)
 		var tb:Bar = new Bar(0, 0, 'timeBar', function() return 0.5, 0, 1);
 		tb.setColors(FlxColor.WHITE, FlxColor.BLACK);
 		tb.scrollFactor.set();
@@ -278,16 +284,16 @@ class HudEditorState extends MusicBeatState implements PsychUIEventHandler.Psych
 		items.push(mTb);
 		applyDefaultPosition(mTb);
 
-		// In Psych timeBar e' aggiunta a uiGroup PRIMA di timeTxt, quindi il testo sta SOPRA la barra.
-		// timeBar va creata dopo timeTxt (la sua Y dipende da timeTxt): scambio gli zIndex invece
-		// dell'ordine di creazione, cosi' la barra finisce sotto il testo come nel gioco.
+		// In Psych timeBar is added to uiGroup BEFORE timeTxt, so the text sits ABOVE the bar.
+		// timeBar must be created after timeTxt (its Y depends on timeTxt): swap the zIndex values instead
+		// of the creation order, so the bar ends up below the text as in the game.
 		var tzSwap:Int = mTimeTxt.zIndex;
 		mTimeTxt.zIndex = mTimeTxt.defaultZ = mTb.zIndex;
 		mTb.zIndex = mTb.defaultZ = tzSwap;
 
-		// comboGroup: placeholder rettangolare. comboGroup parte da (0,0) e i
-		// rating/combo vengono posizionati in coordinate assolute PRIMA di
-		// essere aggiunti, quindi si sposta con un DELTA rispetto al default.
+		// comboGroup: rectangular placeholder. comboGroup starts at (0,0) and the
+		// rating/combo sprites are positioned in absolute coordinates BEFORE
+		// being added, so it is moved with a DELTA relative to the default.
 		var combo:FlxSprite = new FlxSprite().makeGraphic(200, 100, 0x00000000);
 		drawPlaceholderBox(combo, 200, 100, 0xFFFFD34D, 'COMBO / RATING');
 		combo.scrollFactor.set();
@@ -296,7 +302,7 @@ class HudEditorState extends MusicBeatState implements PsychUIEventHandler.Psych
 		applyDefaultPosition(mCombo);
 	}
 
-	// Disegna un rettangolo con bordo + etichetta dentro un FlxSprite
+	// Draws a rectangle with border + label inside a FlxSprite
 	function drawPlaceholderBox(spr:FlxSprite, w:Int, h:Int, border:FlxColor, label:String)
 	{
 		spr.makeGraphic(w, h, FlxColor.fromRGB(border.red, border.green, border.blue, 60));
@@ -315,8 +321,8 @@ class HudEditorState extends MusicBeatState implements PsychUIEventHandler.Psych
 		spr.dirty = true;
 	}
 
-	// Posizione di default di un elemento NON overlay, replicando PlayState.
-	// Aggiorna anche defaultX/Y/Alpha del meta.
+	// Default position of a NON-overlay element, replicating PlayState.
+	// Also updates the meta's defaultX/Y/Alpha.
 	function applyDefaultPosition(m:EditorMetaSprite)
 	{
 		var s:FlxSprite = m.sprite;
@@ -338,7 +344,7 @@ class HudEditorState extends MusicBeatState implements PsychUIEventHandler.Psych
 					if (noteData > 1)
 						strum.x += FlxG.width / 2 + 25;
 				}
-				strum.playerPosition(); // aggiunge swagWidth*noteData + 50 + (width/2)*player
+				strum.playerPosition(); // adds swagWidth*noteData + 50 + (width/2)*player
 				m.defaultAlpha = (player == 0 && middlescroll) ? 0.35 : 1;
 
 			case 'healthbar':
@@ -377,8 +383,8 @@ class HudEditorState extends MusicBeatState implements PsychUIEventHandler.Psych
 		return null;
 	}
 
-	// Cambio downscroll/middlescroll: ricalcola i default. Gli elementi che
-	// stavano al vecchio default seguono il nuovo; quelli spostati dall'utente restano.
+	// downscroll/middlescroll change: recomputes the defaults. Elements that
+	// were at the old default follow the new one; user-moved ones stay put.
 	function onModeChanged()
 	{
 		stopPreview();
@@ -453,7 +459,8 @@ class HudEditorState extends MusicBeatState implements PsychUIEventHandler.Psych
 			'   ESC / Finish button = close the chain and create the tween (element returns to A)',
 			'   Right Click (no drag) = cancel the whole capture',
 			'',
-			'Elements box: Move Up / Move Down = draw order (zIndex); Object tab: to Front / to Back',
+			'Elements box: the list is the draw order (top = front). Move Up / Move Down reorder it; Object tab: to Front / to Back',
+			'Groups (G| in the list): select Strums Opponent / Boyfriend / All, then use the Group tab to move, scale, rotate them together',
 			'',
 			'F1 - This help',
 			'$btn - Toggle UI panels',
@@ -507,7 +514,7 @@ class HudEditorState extends MusicBeatState implements PsychUIEventHandler.Psych
 	}
 
 	// -------------------------------------------------------------------
-	// Lista elementi (Strums / Widgets / Overlays / Tweens)
+	// Element list (Groups / Strums / Widgets / Overlays / Tweens)
 	// -------------------------------------------------------------------
 	function addSpriteListBox()
 	{
@@ -570,7 +577,7 @@ class HudEditorState extends MusicBeatState implements PsychUIEventHandler.Psych
 		buttonDelete.normalStyle.textColor = FlxColor.WHITE;
 		tab_group.add(buttonDelete);
 
-		// Move Up / Move Down: cambiano lo zIndex (draw order globale) dell'elemento selezionato
+		// Move Up / Move Down: change the selected element's zIndex (global draw order)
 		var buttonMoveUp:PsychUIButton = new PsychUIButton(buttonX, buttonY + 90, 'Move Up', function() moveSelectedZ('forward'));
 		buttonMoveUp.cameras = [camHUD];
 		tab_group.add(buttonMoveUp);
@@ -586,7 +593,7 @@ class HudEditorState extends MusicBeatState implements PsychUIEventHandler.Psych
 		if (tweenCaptureActive)
 			cancelTweenCapture();
 
-		// elimina anche i tween che puntano a questo overlay
+		// also delete the tweens that target this overlay
 		hudTweens = [for (t in hudTweens) if (!(t.targetType == 'overlay' && t.targetName == m.name)) t];
 		items.remove(m);
 		m.sprite = FlxDestroyUtil.destroy(m.sprite);
@@ -618,22 +625,26 @@ class HudEditorState extends MusicBeatState implements PsychUIEventHandler.Psych
 		return 'T| ' + t.targetName + ' (' + trig + ')' + (t.keys.length > 2 ? ' x' + t.keys.length : '');
 	}
 
-	// Ricostruisce la lista (elementi raggruppati: Strums, Widgets, Overlays, poi Tweens)
+	// Rebuilds the list: GROUPS first, then elements in draw order
+	// (top = front, like layers: Move Up moves the element up in the list), then Tweens
 	function refreshList()
 	{
 		listRefs = [];
 		var labels:Array<String> = [];
 
-		for (group in ['strum', 'widget', 'overlay'])
-			for (i in 0...items.length)
-			{
-				var m:EditorMetaSprite = items[i];
-				var g:String = (m.type == 'strum') ? 'strum' : (m.type == 'overlay' ? 'overlay' : 'widget');
-				if (g != group)
-					continue;
-				listRefs.push({kind: 0, idx: i});
-				labels.push(elementPrefix(m) + m.name);
-			}
+		for (g in 0...groupNames.length)
+		{
+			listRefs.push({kind: 2, idx: g});
+			labels.push('G| ' + groupNames[g]);
+		}
+
+		var ordered:Array<EditorMetaSprite> = sortedItems();
+		ordered.reverse(); // higher zIndex = in front = top of the list
+		for (m in ordered)
+		{
+			listRefs.push({kind: 0, idx: items.indexOf(m)});
+			labels.push(elementPrefix(m) + m.name);
+		}
 
 		for (i in 0...hudTweens.length)
 		{
@@ -650,12 +661,21 @@ class HudEditorState extends MusicBeatState implements PsychUIEventHandler.Psych
 		spriteList_box.resize(250, Std.int(Math.min(maxNum, labels.length) * 25 + 35));
 	}
 
-	// Evidenzia nella lista l'elemento selezionato
+	// Highlights the selected element in the list
 	function syncListSelection()
 	{
 		listSyncing = true;
 		spriteListRadioGroup.checked = -1;
-		if (selectedIdx >= 0)
+		if (selectedGroup >= 0)
+		{
+			for (n => ref in listRefs)
+				if (ref.kind == 2 && ref.idx == selectedGroup)
+				{
+					spriteListRadioGroup.checked = n;
+					break;
+				}
+		}
+		else if (selectedIdx >= 0)
 			for (n => ref in listRefs)
 				if (ref.kind == 0 && ref.idx == selectedIdx)
 				{
@@ -680,6 +700,16 @@ class HudEditorState extends MusicBeatState implements PsychUIEventHandler.Psych
 			cancelTweenCapture();
 
 		var ref = listRefs[c];
+		if (ref.kind == 2)
+		{
+			selectedGroup = ref.idx;
+			selectedIdx = -1;
+			dragSprite = null;
+			UI_box.selectedName = 'Group';
+			updateSelectedUI();
+			return;
+		}
+		selectedGroup = -1;
 		if (ref.kind == 0)
 			selectedIdx = ref.idx;
 		else
@@ -687,7 +717,7 @@ class HudEditorState extends MusicBeatState implements PsychUIEventHandler.Psych
 			var t:HudTweenData = hudTweens[ref.idx];
 			selectedIdx = indexOfTarget(t);
 		}
-		if (UI_box.selectedName == 'Settings')
+		if (UI_box.selectedName == 'Settings' || UI_box.selectedName == 'Group')
 			UI_box.selectedName = 'Object';
 		updateSelectedUI();
 	}
@@ -698,9 +728,10 @@ class HudEditorState extends MusicBeatState implements PsychUIEventHandler.Psych
 	function selectItem(index:Int)
 	{
 		stopPreview();
+		selectedGroup = -1;
 		selectedIdx = index;
 		syncListSelection();
-		if (UI_box.selectedName == 'Settings')
+		if (UI_box.selectedName == 'Settings' || UI_box.selectedName == 'Group')
 			UI_box.selectedName = 'Object';
 		updateSelectedUI();
 	}
@@ -709,6 +740,7 @@ class HudEditorState extends MusicBeatState implements PsychUIEventHandler.Psych
 	{
 		stopPreview();
 		selectedIdx = -1;
+		selectedGroup = -1;
 		dragSprite = null;
 		syncListSelection();
 		updateSelectedUI();
@@ -735,7 +767,7 @@ class HudEditorState extends MusicBeatState implements PsychUIEventHandler.Psych
 		return name;
 	}
 
-	// Nomi interni di PlayState che un overlay NON puo' usare
+	// PlayState internal names that an overlay can NOT use
 	public static var reservedLuaNames:Array<String> = [
 		'healthBar', 'scoreTxt', 'timeTxt', 'timeBar', 'comboGroup', 'iconP1', 'iconP2', 'botplayTxt', 'strumLineNotes', 'opponentStrums', 'playerStrums'
 	];
@@ -792,7 +824,7 @@ class HudEditorState extends MusicBeatState implements PsychUIEventHandler.Psych
 
 	function editorUI()
 	{
-		UI_box = new PsychUIBox(FlxG.width - 235, 20, 215, Std.int(Math.min(660, FlxG.height - 40)), ['Settings', 'Object', 'Tween']);
+		UI_box = new PsychUIBox(FlxG.width - 235, 20, 215, Std.int(Math.min(660, FlxG.height - 40)), ['Settings', 'Object', 'Tween', 'Group']);
 		UI_box.cameras = [camHUD];
 		UI_box.scrollFactor.set();
 		add(UI_box);
@@ -800,6 +832,7 @@ class HudEditorState extends MusicBeatState implements PsychUIEventHandler.Psych
 		addSettingsTab();
 		addObjectTab();
 		addTweenTab();
+		addGroupTab();
 		UI_box.selectedName = 'Settings';
 	}
 
@@ -864,7 +897,7 @@ class HudEditorState extends MusicBeatState implements PsychUIEventHandler.Psych
 
 		tab_group.add(new FlxText(objX, objY + 230, 195, 'F1: help   F2 / H: hide/show panels\nPanels can be dragged by their tabs.'));
 
-		// la dropdown va aggiunta per ULTIMA (si apre sopra agli altri controlli)
+		// the dropdown must be added LAST (it opens above the other controls)
 		tab_group.add(new FlxText(objX, objY - 18, 190, 'Song (export path):'));
 		songDropDown = new PsychUIDropDownMenu(objX, objY, scanSongs(), function(sel:Int, selected:String)
 		{
@@ -910,7 +943,7 @@ class HudEditorState extends MusicBeatState implements PsychUIEventHandler.Psych
 					return;
 				}
 
-			// i tween puntano al nome: li aggiorno
+			// tweens point to the name: update them
 			for (t in hudTweens)
 				if (t.targetType == 'overlay' && t.targetName == m.name)
 					t.targetName = changed;
@@ -1055,7 +1088,7 @@ class HudEditorState extends MusicBeatState implements PsychUIEventHandler.Psych
 		tab_group.add(new PsychUIButton(objX + 100, objY, 'Send to Back', function() moveSelectedZ('back'), 95));
 	}
 
-	// Elementi in ordine di disegno (zIndex crescente; a parita' vale l'ordine di creazione)
+	// Elements in draw order (ascending zIndex; ties follow creation order)
 	function sortedItems():Array<EditorMetaSprite>
 	{
 		var s:Array<EditorMetaSprite> = items.copy();
@@ -1118,6 +1151,7 @@ class HudEditorState extends MusicBeatState implements PsychUIEventHandler.Psych
 			return;
 		}
 		unsavedProgress = true;
+		refreshList(); // the list follows the new draw order
 		refreshZLabel();
 	}
 
@@ -1151,6 +1185,7 @@ class HudEditorState extends MusicBeatState implements PsychUIEventHandler.Psych
 		if (m == null)
 		{
 			infoTxt.text = '';
+			refreshGroupUI();
 			tweenTargetTxt.text = 'Target: (nothing selected)';
 			zLabel.text = 'zIndex: -';
 			refreshTweenUI();
@@ -1175,9 +1210,14 @@ class HudEditorState extends MusicBeatState implements PsychUIEventHandler.Psych
 		uiUpdating = false;
 	}
 
-	// Aggiorna solo il testo di posizione (durante il drag)
+	// Updates only the position text (while dragging)
 	function refreshPosUI()
 	{
+		if (selectedGroup >= 0)
+		{
+			refreshGroupUI();
+			return;
+		}
 		var m:EditorMetaSprite = getSelected();
 		if (m == null)
 			return;
@@ -1200,6 +1240,217 @@ class HudEditorState extends MusicBeatState implements PsychUIEventHandler.Psych
 				if (!uiUpdating)
 					unsavedProgress = true;
 		}
+	}
+
+
+	// -------------------------------------------------------------------
+	// Groups (Strums Opponent / Boyfriend / All): move, scale, rotate, opacity together
+	// -------------------------------------------------------------------
+	var groupNameTxt:FlxText;
+	var gPosX:PsychUINumericStepper;
+	var gPosY:PsychUINumericStepper;
+	var gScale:PsychUINumericStepper;
+	var gAngle:PsychUINumericStepper;
+	var gAlpha:PsychUINumericStepper;
+
+	function groupMembers(g:Int):Array<EditorMetaSprite>
+	{
+		var out:Array<EditorMetaSprite> = [];
+		if (g < 0)
+			return out;
+		for (m in items)
+		{
+			if (m.type != 'strum')
+				continue;
+			var opp:Bool = (m.targetIndex < 4);
+			if (g == 2 || (g == 0 && opp) || (g == 1 && !opp))
+				out.push(m);
+		}
+		return out;
+	}
+
+	function inSelectedGroup(m:EditorMetaSprite):Bool
+		return selectedGroup >= 0 && groupMembers(selectedGroup).contains(m);
+
+	// Visual anchor point (does not change with scale/rotation, which use the origin)
+	function anchorX(m:EditorMetaSprite):Float
+		return m.sprite.x - m.sprite.offset.x + m.sprite.origin.x;
+
+	function anchorY(m:EditorMetaSprite):Float
+		return m.sprite.y - m.sprite.offset.y + m.sprite.origin.y;
+
+	function groupCenter(ms:Array<EditorMetaSprite>):FlxPoint
+	{
+		var cx:Float = 0;
+		var cy:Float = 0;
+		for (m in ms)
+		{
+			cx += anchorX(m);
+			cy += anchorY(m);
+		}
+		var n:Float = Math.max(1, ms.length);
+		return FlxPoint.get(cx / n, cy / n);
+	}
+
+	function addGroupTab()
+	{
+		var tab_group = UI_box.getTab('Group').menu;
+		var gx = 10;
+		var gy = 30;
+
+		groupNameTxt = new FlxText(gx, gy - 18, 195, 'Group: (none)');
+		tab_group.add(groupNameTxt);
+
+		gy += 20;
+		tab_group.add(new FlxText(gx, gy - 18, 190, 'Center (X / Y):'));
+		gPosX = new PsychUINumericStepper(gx, gy, 1, 0, -5000, 5000, 0);
+		gPosY = new PsychUINumericStepper(gx + 90, gy, 1, 0, -5000, 5000, 0);
+		gPosX.onValueChange = gPosY.onValueChange = function()
+		{
+			if (uiUpdating || selectedGroup < 0)
+				return;
+			var ms:Array<EditorMetaSprite> = groupMembers(selectedGroup);
+			var c:FlxPoint = groupCenter(ms);
+			shiftGroup(ms, gPosX.value - c.x, gPosY.value - c.y);
+			c.put();
+			unsavedProgress = true;
+		};
+		tab_group.add(gPosX);
+		tab_group.add(gPosY);
+
+		gy += 40;
+		tab_group.add(new FlxText(gx, gy - 18, 100, 'Scale:'));
+		gScale = new PsychUINumericStepper(gx, gy, 0.05, 1, 0.05, 10, 2);
+		gScale.onValueChange = function()
+		{
+			if (uiUpdating || selectedGroup < 0)
+				return;
+			scaleGroup(groupMembers(selectedGroup), gScale.value);
+			unsavedProgress = true;
+		};
+		tab_group.add(gScale);
+
+		tab_group.add(new FlxText(gx + 90, gy - 18, 80, 'Angle:'));
+		gAngle = new PsychUINumericStepper(gx + 90, gy, 10, 0, -360, 360, 0);
+		gAngle.onValueChange = function()
+		{
+			if (uiUpdating || selectedGroup < 0)
+				return;
+			rotateGroup(groupMembers(selectedGroup), gAngle.value);
+			unsavedProgress = true;
+		};
+		tab_group.add(gAngle);
+
+		gy += 40;
+		tab_group.add(new FlxText(gx, gy - 18, 80, 'Opacity:'));
+		gAlpha = new PsychUINumericStepper(gx, gy, 0.1, 1, 0, 1, 2, true);
+		gAlpha.onValueChange = function()
+		{
+			if (uiUpdating || selectedGroup < 0)
+				return;
+			for (m in groupMembers(selectedGroup))
+				m.alpha = gAlpha.value;
+			unsavedProgress = true;
+		};
+		tab_group.add(gAlpha);
+
+		gy += 40;
+		tab_group.add(new PsychUIButton(gx, gy, 'Reset Group', function()
+		{
+			if (selectedGroup < 0)
+				return;
+			for (m in groupMembers(selectedGroup))
+				resetItemToDefault(m);
+			unsavedProgress = true;
+			updateSelectedUI();
+		}, 120));
+
+		gy += 35;
+		tab_group.add(new FlxText(gx, gy, 195, 'Select a group from the list (G|).\nCtrl+drag / arrows / right-drag move the whole group.\nScale and rotate work around the group center.'));
+	}
+
+	function shiftGroup(ms:Array<EditorMetaSprite>, dx:Float, dy:Float)
+	{
+		stopPreview();
+		for (m in ms)
+		{
+			m.x += dx;
+			m.y += dy;
+		}
+	}
+
+	// value = new reference scale (the first member's): distances from the center scale by the same ratio
+	function scaleGroup(ms:Array<EditorMetaSprite>, value:Float)
+	{
+		if (ms.length == 0)
+			return;
+		stopPreview();
+		var cur:Float = ms[0].scale[0];
+		if (cur == 0)
+			return;
+		var r:Float = value / cur;
+		if (Math.abs(r - 1) < 0.0001)
+			return;
+		var c:FlxPoint = groupCenter(ms);
+		for (m in ms)
+		{
+			var ax:Float = anchorX(m);
+			var ay:Float = anchorY(m);
+			if (m.canScale)
+				m.setScale(m.scale[0] * r, m.scale[1] * r, false);
+			m.x += (c.x + (ax - c.x) * r) - ax;
+			m.y += (c.y + (ay - c.y) * r) - ay;
+		}
+		c.put();
+	}
+
+	// value = new reference angle (the first member's): positions rotate by the difference around the center
+	function rotateGroup(ms:Array<EditorMetaSprite>, value:Float)
+	{
+		if (ms.length == 0)
+			return;
+		stopPreview();
+		var delta:Float = value - ms[0].angle;
+		if (Math.abs(delta) < 0.0001)
+			return;
+		var rad:Float = delta * Math.PI / 180;
+		var cs:Float = Math.cos(rad);
+		var sn:Float = Math.sin(rad);
+		var c:FlxPoint = groupCenter(ms);
+		for (m in ms)
+		{
+			var dx:Float = anchorX(m) - c.x;
+			var dy:Float = anchorY(m) - c.y;
+			m.x += (dx * cs - dy * sn) - dx;
+			m.y += (dx * sn + dy * cs) - dy;
+			if (m.canRotate)
+				m.angle += delta;
+		}
+		c.put();
+	}
+
+	function refreshGroupUI()
+	{
+		if (selectedGroup < 0)
+		{
+			groupNameTxt.text = 'Group: (none)';
+			return;
+		}
+		var ms:Array<EditorMetaSprite> = groupMembers(selectedGroup);
+		groupNameTxt.text = 'Group: ' + groupNames[selectedGroup] + ' (' + ms.length + ')';
+		if (ms.length == 0)
+			return;
+		var c:FlxPoint = groupCenter(ms);
+		var wasUpdating:Bool = uiUpdating;
+		uiUpdating = true;
+		gPosX.value = Math.round(c.x);
+		gPosY.value = Math.round(c.y);
+		gScale.value = ms[0].scale[0];
+		gAngle.value = ms[0].angle;
+		gAlpha.value = ms[0].alpha;
+		uiUpdating = wasUpdating;
+		infoTxt.text = 'Group: ' + groupNames[selectedGroup] + '   Center X: ' + Math.round(c.x) + '   Y: ' + Math.round(c.y);
+		c.put();
 	}
 
 	// -------------------------------------------------------------------
@@ -1226,8 +1477,8 @@ class HudEditorState extends MusicBeatState implements PsychUIEventHandler.Psych
 		for (c in [tPropX, tPropY, tPropAlpha, tPropAngle, tPropScale])
 			tab_group.add(c);
 
-		// Duration / Easing sono PER SEGMENTO: modificano il segmento che ARRIVA al keyframe
-		// selezionato in basso (A e' il punto di partenza: li' modificano i default dei nuovi segmenti).
+		// Duration / Easing are PER SEGMENT: they edit the segment that ARRIVES at the keyframe
+		// selected below (A is the starting point: there they edit the defaults of new segments).
 		tDurLabel = new FlxText(objX, 76, 95, 'Duration (s):');
 		tab_group.add(tDurLabel);
 		tDuration = new PsychUINumericStepper(objX, 92, 0.1, 1, 0.05, 600, 2);
@@ -1305,7 +1556,7 @@ class HudEditorState extends MusicBeatState implements PsychUIEventHandler.Psych
 				return;
 			}
 			stopPreview();
-			hudTweens.remove(t); // cancella TUTTA la catena di keyframe
+			hudTweens.remove(t); // deletes the WHOLE keyframe chain
 			refreshList();
 			updateSelectedUI();
 			unsavedProgress = true;
@@ -1315,8 +1566,8 @@ class HudEditorState extends MusicBeatState implements PsychUIEventHandler.Psych
 		deleteButton.normalStyle.textColor = FlxColor.WHITE;
 		tab_group.add(deleteButton);
 
-		// ---- lista keyframe ----
-		tab_group.add(new FlxText(objX, 460, 195, 'Keyframes (pick one to edit its segment):'));
+		// ---- keyframe list ----
+		tab_group.add(new FlxText(objX, 460, 195, 'Keyframes'));
 
 		tRemoveKeyButton = new PsychUIButton(objX, 502, 'Remove Keyframe', removeSelectedKeyframe, 150);
 		tRemoveKeyButton.normalStyle.bgColor = FlxColor.fromRGB(150, 40, 40);
@@ -1326,7 +1577,7 @@ class HudEditorState extends MusicBeatState implements PsychUIEventHandler.Psych
 		tKeyList = new FlxText(objX, 532, 195, '');
 		tab_group.add(tKeyList);
 
-		// le dropdown vanno aggiunte per ULTIME: si aprono sopra agli altri controlli
+		// the dropdowns must be added LAST: they open above the other controls
 		tEasingDD = new PsychUIDropDownMenu(objX, 138, EASE_LIST, function(sel:Int, selected:String)
 		{
 			if (!uiUpdating)
@@ -1349,7 +1600,7 @@ class HudEditorState extends MusicBeatState implements PsychUIEventHandler.Psych
 		tab_group.add(tKeyDD);
 	}
 
-	// Il tween del target selezionato, oppure il template (impostazioni per il prossimo tween)
+	// The selected target's tween, or the template (settings for the next tween)
 	function activeTweenData():HudTweenData
 	{
 		var t:HudTweenData = tweenForTarget(getSelected());
@@ -1362,7 +1613,7 @@ class HudEditorState extends MusicBeatState implements PsychUIEventHandler.Psych
 	function keyName(i:Int):String
 		return (i < 26) ? String.fromCharCode(65 + i) : 'K' + i;
 
-	// Keyframe attivi: quelli della cattura in corso, altrimenti quelli del tween del target selezionato
+	// Active keyframes: those of the capture in progress, otherwise those of the selected target's tween
 	function activeKeys():Array<HudKeyframe>
 	{
 		if (tweenCaptureActive)
@@ -1371,7 +1622,7 @@ class HudEditorState extends MusicBeatState implements PsychUIEventHandler.Psych
 		return (t != null) ? t.keys : null;
 	}
 
-	// Il keyframe di cui si modifica il segmento in arrivo (null = si modificano i default del template)
+	// The keyframe whose incoming segment is being edited (null = editing the template defaults)
 	function selectedSegmentKey():HudKeyframe
 	{
 		var ks:Array<HudKeyframe> = activeKeys();
@@ -1450,7 +1701,7 @@ class HudEditorState extends MusicBeatState implements PsychUIEventHandler.Psych
 		tModeCheckbox.checked = tweenCaptureMode;
 		tCaptureButton.label = tweenCaptureActive ? 'Add Keyframe (Ctrl+Click)' : 'Capture Tween (A)';
 
-		// Duration / Easing del segmento selezionato (o default dei nuovi segmenti)
+		// Duration / Easing of the selected segment (or defaults for new segments)
 		var ks:Array<HudKeyframe> = activeKeys();
 		var seg:HudKeyframe = selectedSegmentKey();
 		if (seg != null)
@@ -1469,7 +1720,7 @@ class HudEditorState extends MusicBeatState implements PsychUIEventHandler.Psych
 			tEasingDD.selectedLabel = tweenTemplate.easing;
 		}
 
-		// lista keyframe
+		// keyframe list
 		if (ks == null || ks.length < 1)
 		{
 			if (rebuildKeyList)
@@ -1517,7 +1768,7 @@ class HudEditorState extends MusicBeatState implements PsychUIEventHandler.Psych
 	}
 
 	// -------------------------------------------------------------------
-	// Cattura tween (catena di keyframe)
+	// Tween capture (keyframe chain)
 	// -------------------------------------------------------------------
 	function indexOfTarget(t:HudTweenData):Int
 	{
@@ -1547,8 +1798,8 @@ class HudEditorState extends MusicBeatState implements PsychUIEventHandler.Psych
 		return null;
 	}
 
-	// Fotografa lo stato corrente dell'elemento come keyframe
-	// (duration/easing = default del template per il segmento che ARRIVA qui)
+	// Snapshots the element's current state as a keyframe
+	// (duration/easing = template defaults for the segment that ARRIVES here)
 	function snapshotKey(m:EditorMetaSprite):HudKeyframe
 	{
 		var k:HudKeyframe = new HudKeyframe();
@@ -1585,7 +1836,7 @@ class HudEditorState extends MusicBeatState implements PsychUIEventHandler.Psych
 		refreshTweenUI();
 	}
 
-	// Salva lo stato corrente come nuovo keyframe e RESTA in cattura
+	// Saves the current state as a new keyframe and STAYS in capture
 	function addCaptureKeyframe():Bool
 	{
 		if (!tweenCaptureActive || tweenCaptureTarget == null || capKeys.length < 1)
@@ -1621,7 +1872,7 @@ class HudEditorState extends MusicBeatState implements PsychUIEventHandler.Psych
 		beginTweenCapture(m);
 	}
 
-	// Riporta il target ai valori di A (primo keyframe)
+	// Returns the target to the A values (first keyframe)
 	function revertCapture(m:EditorMetaSprite)
 	{
 		if (capKeys.length < 1)
@@ -1650,7 +1901,7 @@ class HudEditorState extends MusicBeatState implements PsychUIEventHandler.Psych
 		updateSelectedUI();
 	}
 
-	// Chiude la catena: la posizione corrente diventa l'ultimo keyframe (se diversa dall'ultimo salvato)
+	// Closes the chain: the current position becomes the last keyframe (if different from the last saved one)
 	function finishTweenCapture()
 	{
 		if (!tweenCaptureActive || tweenCaptureTarget == null)
@@ -1675,7 +1926,7 @@ class HudEditorState extends MusicBeatState implements PsychUIEventHandler.Psych
 		t.targetIndex = m.targetIndex;
 		t.keys = capKeys.copy();
 
-		// abilita automaticamente le proprieta' che cambiano davvero tra keyframe consecutivi
+		// automatically enables the properties that actually change between consecutive keyframes
 		var any:Bool = false;
 		for (i in 1...t.keys.length)
 		{
@@ -1703,7 +1954,7 @@ class HudEditorState extends MusicBeatState implements PsychUIEventHandler.Psych
 		var existing:HudTweenData = tweenForTarget(m);
 		if (existing != null)
 		{
-			// NON permetto due tween sullo stesso target senza conferma
+			// do NOT allow two tweens on the same target without confirmation
 			askConfirm('"${m.name}" already has a tween.\nReplace it?', function() commitTween(t, existing, m), function() cancelTweenCapture());
 			return;
 		}
@@ -1716,7 +1967,7 @@ class HudEditorState extends MusicBeatState implements PsychUIEventHandler.Psych
 			hudTweens.remove(existing);
 		hudTweens.push(t);
 
-		// il tween e' un DATO: l'elemento torna alla posizione A
+		// the tween is DATA: the element returns to position A
 		revertCapture(m);
 		tweenCaptureActive = false;
 		tweenCaptureTarget = null;
@@ -1730,7 +1981,7 @@ class HudEditorState extends MusicBeatState implements PsychUIEventHandler.Psych
 	}
 
 	// -------------------------------------------------------------------
-	// Preview del tween (FlxTween in editor; poi l'elemento torna com'era)
+	// Tween preview (FlxTween in the editor; then the element goes back to how it was)
 	// -------------------------------------------------------------------
 	public static function easeByName(n:String):Float->Float
 	{
@@ -1773,7 +2024,7 @@ class HudEditorState extends MusicBeatState implements PsychUIEventHandler.Psych
 		}
 	}
 
-	// Segmenti della catena: avanti A->B->C... e, con yoyo, anche il ritorno (stessa durata/easing dei segmenti originali)
+	// Chain segments: forward A->B->C... and, with yoyo, also the way back (same duration/easing as the original segments)
 	function buildSegs(t:HudTweenData, withReverse:Bool):Array<HudSeg>
 	{
 		var k:Array<HudKeyframe> = t.keys;
@@ -1820,7 +2071,7 @@ class HudEditorState extends MusicBeatState implements PsychUIEventHandler.Psych
 		previewStep(m, t, buildSegs(t, t.yoyo), 0, true);
 	}
 
-	// parte da A
+	// starts from A
 	function applyPreviewStart(m:EditorMetaSprite, t:HudTweenData)
 	{
 		var s:FlxSprite = m.sprite;
@@ -1837,11 +2088,11 @@ class HudEditorState extends MusicBeatState implements PsychUIEventHandler.Psych
 			s.scale.set(a.scale, a.scale);
 	}
 
-	// Esegue il segmento i; al termine (onComplete) parte il successivo. Loop/yoyo = ricomincia da A.
+	// Runs segment i; when it ends (onComplete) the next one starts. Loop/yoyo = restarts from A.
 	function previewStep(m:EditorMetaSprite, t:HudTweenData, segs:Array<HudSeg>, i:Int, first:Bool)
 	{
 		if (previewMeta != m)
-			return; // anteprima fermata nel frattempo
+			return; // preview stopped in the meantime
 
 		if (i >= segs.length)
 		{
@@ -1851,7 +2102,7 @@ class HudEditorState extends MusicBeatState implements PsychUIEventHandler.Psych
 				previewStep(m, t, segs, 0, false);
 			}
 			else
-				previewRestoreTimer = 0.6; // lascio vedere lo stato finale e poi ripristino
+				previewRestoreTimer = 0.6; // let the final state show, then restore
 			return;
 		}
 
@@ -1926,7 +2177,7 @@ class HudEditorState extends MusicBeatState implements PsychUIEventHandler.Psych
 	}
 
 	// -------------------------------------------------------------------
-	// Overlay (PNG importati)
+	// Overlays (imported PNGs)
 	// -------------------------------------------------------------------
 	function createOverlay(imageName:String, anims:Array<AnimArray>, animated:Bool):EditorMetaSprite
 	{
@@ -1937,7 +2188,7 @@ class HudEditorState extends MusicBeatState implements PsychUIEventHandler.Psych
 		m.animated = animated;
 		m.animations = anims;
 		m.firstAnimation = (anims != null && anims.length > 0) ? anims[0].anim : null;
-		m.image = imageName; // carica il grafico (con fallback magenta)
+		m.image = imageName; // loads the graphic (with magenta fallback)
 
 		if (animated && anims != null)
 		{
@@ -1953,9 +2204,9 @@ class HudEditorState extends MusicBeatState implements PsychUIEventHandler.Psych
 	}
 
 	// ---------------------------------------------------------------
-	// PNG picker: legge mods/images (e sottocartelle), solo PNG oppure PNG + XML
-	// (copiato da StageEditorState; PngEntry -> HudPngEntry per evitare il
-	//  conflitto di nome nello stesso package)
+	// PNG picker: reads mods/images (and subfolders), PNG only or PNG + XML
+	// (copied from StageEditorState; PngEntry -> HudPngEntry to avoid the
+	//  name clash in the same package)
 	// ---------------------------------------------------------------
 	static inline var PNG_DIR:String = 'mods/images/';
 	static inline var PNG_PICKER_W:Int = 560;
@@ -2101,7 +2352,7 @@ class HudEditorState extends MusicBeatState implements PsychUIEventHandler.Psych
 		}
 	}
 
-	// Gestisce l'input del picker (modale). Ritorna true se il picker e' aperto.
+	// Handles the picker input (modal). Returns true if the picker is open.
 	function updatePngPicker():Bool
 	{
 		if (!pngPickerOpen)
@@ -2158,8 +2409,8 @@ class HudEditorState extends MusicBeatState implements PsychUIEventHandler.Psych
 		return true;
 	}
 
-	// Legge le animazioni da un XML Sparrow: una anim per prefisso
-	// (il nome del SubTexture senza il numero di frame finale).
+	// Reads the animations from a Sparrow XML: one anim per prefix
+	// (the SubTexture name without the trailing frame number).
 	function readXmlAnimations(xmlPath:String):Array<AnimArray>
 	{
 		var result:Array<AnimArray> = [];
@@ -2221,7 +2472,7 @@ class HudEditorState extends MusicBeatState implements PsychUIEventHandler.Psych
 	}
 
 	// -------------------------------------------------------------------
-	// Popup di conferma (usato da "Reset All" e da "Replace?")
+	// Confirm popup (used by "Reset All" and "Replace?")
 	// -------------------------------------------------------------------
 	var confirmGroup:FlxSpriteGroup;
 	var confirmText:FlxText;
@@ -2306,6 +2557,7 @@ class HudEditorState extends MusicBeatState implements PsychUIEventHandler.Psych
 		hudTweens = [];
 		capKeys = [];
 		selectedIdx = -1;
+		selectedGroup = -1;
 		tweenTemplate = new HudTweenData();
 
 		EditorMetaSprite.zCounter = 0;
@@ -2317,7 +2569,7 @@ class HudEditorState extends MusicBeatState implements PsychUIEventHandler.Psych
 	}
 
 	// -------------------------------------------------------------------
-	// Pannello di export (snippet scrollabile + clipboard + "Salva come file")
+	// Export panel (scrollable snippet + clipboard + "Save as file")
 	// -------------------------------------------------------------------
 	static inline var EXPORT_LINES:Int = 30;
 
@@ -2469,7 +2721,7 @@ class HudEditorState extends MusicBeatState implements PsychUIEventHandler.Psych
 	}
 
 	// -------------------------------------------------------------------
-	// Salvataggio come file (opzionale): <song>_hud.lua
+	// Save as file (optional): <song>_hud.lua
 	// -------------------------------------------------------------------
 	var _file:FileReference;
 
@@ -2525,7 +2777,7 @@ class HudEditorState extends MusicBeatState implements PsychUIEventHandler.Psych
 	}
 
 	// -------------------------------------------------------------------
-	// Generazione Lua
+	// Lua generation
 	// -------------------------------------------------------------------
 	function luaStr(s:String):String
 		return "'" + s.replace("\\", "\\\\").replace("'", "\\'").replace("\n", "\\n") + "'";
@@ -2538,7 +2790,7 @@ class HudEditorState extends MusicBeatState implements PsychUIEventHandler.Psych
 		return Std.string(f);
 	}
 
-	// Numero per codice Haxe (HScript): sempre con il punto decimale
+	// Number for Haxe code (HScript): always with the decimal point
 	function hxNum(v:Float):String
 	{
 		var s:String = luaNum(v);
@@ -2554,7 +2806,7 @@ class HudEditorState extends MusicBeatState implements PsychUIEventHandler.Psych
 		return EASE_LIST.contains(name) ? name : 'linear';
 
 	function widgetKey(m:EditorMetaSprite):String
-		return m.name; // i nomi dei widget coincidono con i nomi interni di PlayState
+		return m.name; // widget names match PlayState's internal names
 
 	function setLine(m:EditorMetaSprite, field:String, val:String):String
 	{
@@ -2563,7 +2815,7 @@ class HudEditorState extends MusicBeatState implements PsychUIEventHandler.Psych
 		return "setProperty('" + widgetKey(m) + "." + field + "', " + val + ")";
 	}
 
-	// Solo il DIFF rispetto al default (se coincide: niente, per ridurre le collisioni con altri script)
+	// Only the DIFF against the default (if equal: nothing, to reduce collisions with other scripts)
 	function staticLines(m:EditorMetaSprite):Array<String>
 	{
 		var l:Array<String> = [];
@@ -2583,7 +2835,7 @@ class HudEditorState extends MusicBeatState implements PsychUIEventHandler.Psych
 			l.push(setLine(m, 'scale.y', luaNum(m.scale[1])));
 		}
 
-		// tiene coerenti le variabili "default" che usano i modchart
+		// keeps the "default" variables used by modcharts consistent
 		if (m.type == 'strum')
 		{
 			var pre:String = (m.targetIndex >= 4) ? 'defaultPlayerStrum' : 'defaultOpponentStrum';
@@ -2606,7 +2858,7 @@ class HudEditorState extends MusicBeatState implements PsychUIEventHandler.Psych
 		}
 	}
 
-	// Righe che AVVIANO il tween n (parte sempre dal valore A, poi va a B)
+	// Lines that START tween n (always starts from value A, then goes to B)
 	function tweenLines(t:HudTweenData, n:Int):Array<String>
 	{
 		if (t.keys.length < 2)
@@ -2636,7 +2888,7 @@ class HudEditorState extends MusicBeatState implements PsychUIEventHandler.Psych
 		var simple:Bool = (t.targetType == 'overlay' && t.delay <= 0 && !t.loop && !t.yoyo);
 		if (simple)
 		{
-			// overlay: API stabile doTween*
+			// overlay: stable doTween* API
 			var tag:String = luaStr(t.targetName);
 			var base:String = 'hudTween' + n;
 			if (doX)
@@ -2661,7 +2913,7 @@ class HudEditorState extends MusicBeatState implements PsychUIEventHandler.Psych
 			}
 			if (doS)
 			{
-				// Psych non ha doTweenScale: si tweena x/y dell'oggetto "scale"
+				// Psych has no doTweenScale: tween x/y of the "scale" object
 				var sc:String = luaStr(t.targetName + '.scale');
 				L.push('setProperty(' + luaStr(t.targetName + '.scale.x') + ', ' + luaNum(a.scale) + ')');
 				L.push('setProperty(' + luaStr(t.targetName + '.scale.y') + ', ' + luaNum(a.scale) + ')');
@@ -2671,7 +2923,7 @@ class HudEditorState extends MusicBeatState implements PsychUIEventHandler.Psych
 			return L;
 		}
 
-		// strum / widget nativi (e overlay con delay/loop/yoyo): runHaxeCode
+		// native strums / widgets (and overlays with delay/loop/yoyo): runHaxeCode
 		var opts:String = '{ease: FlxEase.' + ease + (t.delay > 0 ? ', startDelay: ' + hxNum(t.delay) : '') + (t.yoyo ? ', type: 4' : (t.loop ? ', type: 2' : '')) + '}';
 		L.push('runHaxeCode([[');
 		L.push('\tvar obj = ' + haxeRef(t) + ';');
@@ -2708,8 +2960,8 @@ class HudEditorState extends MusicBeatState implements PsychUIEventHandler.Psych
 		return L;
 	}
 
-	// Tween a catena (3+ keyframe): runHaxeCode con FlxTween concatenati via onComplete.
-	// (startDelay cumulativo NON e' affidabile: i valori di partenza verrebbero letti troppo presto.)
+	// Chain tween (3+ keyframes): runHaxeCode with FlxTweens chained via onComplete.
+	// (cumulative startDelay is NOT reliable: the starting values would be read too early.)
 	function chainLines(t:HudTweenData, n:Int):Array<String>
 	{
 		var L:Array<String> = [];
@@ -2760,7 +3012,7 @@ class HudEditorState extends MusicBeatState implements PsychUIEventHandler.Psych
 			L.push(ind + 'run = function(first) {');
 			ind += '\t';
 		}
-		// si parte sempre dal valore A
+		// always starts from value A
 		if (fl.x)
 			L.push(ind + 'obj.x = ' + hxNum(a.x) + ';');
 		if (fl.y)
@@ -2785,7 +3037,7 @@ class HudEditorState extends MusicBeatState implements PsychUIEventHandler.Psych
 		return L;
 	}
 
-	// Un segmento: se non e' l'ultimo (o se c'e' loop) il successivo sta dentro onComplete
+	// One segment: if it is not the last (or if looping) the next one goes inside onComplete
 	function chainSeg(L:Array<String>, segs:Array<HudSeg>, i:Int, ind:String, fl:{x:Bool, y:Bool, a:Bool, ang:Bool, s:Bool}, t:HudTweenData, loopy:Bool)
 	{
 		var sg:HudSeg = segs[i];
@@ -2809,7 +3061,7 @@ class HudEditorState extends MusicBeatState implements PsychUIEventHandler.Psych
 			vals.push('angle: ' + hxNum(sg.angle));
 		var hasObj:Bool = vals.length > 0;
 
-		// chi porta la continuazione: il tween dell'oggetto, altrimenti quello della scala
+		// who carries the continuation: the object's tween, otherwise the scale one
 		function emit(target:String, valStr:String, withCb:Bool)
 		{
 			var head:String = ind + 'FlxTween.tween(' + target + ', ' + valStr + ', ' + dur + ', ' + optsHead;
@@ -2833,14 +3085,14 @@ class HudEditorState extends MusicBeatState implements PsychUIEventHandler.Psych
 	}
 
 	// ---------------------------------------------------------------
-	// Draw order GLOBALE. Strategia (Psych 1.0.x: comboGroup < noteGroup < uiGroup, nell'ordine fisso di PlayState):
-	//  - overlay e comboGroup sono membri diretti di PlayState: si piazzano con setObjectOrder subito
-	//    DOPO l'ultimo contenitore/oggetto che devono stare sopra (hudPlaceAfter, indici ricalcolati a runtime);
-	//  - healthBar/scoreTxt/timeTxt/timeBar stanno in uiGroup: si rimescolano tra i LORO slot (icone e
-	//    botplayTxt restano dove sono);
-	//  - gli strum stanno in noteGroup (indice strumLineNotes.members[i] da non toccare): contano come
-	//    ancora "noteGroup", non si riordinano tra loro.
-	// Se nessuno zIndex e' stato cambiato rispetto al default non emette NIENTE.
+	// GLOBAL draw order. Strategy (Psych 1.0.x: comboGroup < noteGroup < uiGroup, in PlayState's fixed order):
+	//  - overlays and comboGroup are direct members of PlayState: they are placed with setObjectOrder right
+	//    AFTER the last container/object they must sit above (hudPlaceAfter, indices recomputed at runtime);
+	//  - healthBar/scoreTxt/timeTxt/timeBar live in uiGroup: they are reshuffled among THEIR slots (icons and
+	//    botplayTxt stay where they are);
+	//  - strums live in noteGroup (the strumLineNotes.members[i] index must not be touched): they count as an
+	//    "noteGroup" anchor and are not reordered among themselves.
+	// If no zIndex was changed from the default, NOTHING is emitted.
 	// ---------------------------------------------------------------
 	function drawOrderLines():Array<String>
 	{
@@ -2856,7 +3108,7 @@ class HudEditorState extends MusicBeatState implements PsychUIEventHandler.Psych
 			return L;
 
 		var sorted:Array<EditorMetaSprite> = sortedItems();
-		L.push('-- DRAW ORDER (globale, dal fondo al top):');
+		L.push('-- DRAW ORDER (global, back to front):');
 		for (i => m in sorted)
 			L.push('--   ' + (i + 1) + '. ' + m.name + ' (zIndex ' + m.zIndex + ')');
 
@@ -2872,7 +3124,7 @@ class HudEditorState extends MusicBeatState implements PsychUIEventHandler.Psych
 		L.push('\tend');
 		L.push('\tif top < 0 then return end');
 		L.push('\tif getObjectOrder(tag) < top then');
-		L.push('\t\tsetObjectOrder(tag, top) -- rimuovendo tag, l\'ancora scala di 1');
+		L.push('\t\tsetObjectOrder(tag, top) -- removing tag shifts the anchor by 1');
 		L.push('\telse');
 		L.push('\t\tsetObjectOrder(tag, top + 1)');
 		L.push('\tend');
@@ -2905,7 +3157,7 @@ class HudEditorState extends MusicBeatState implements PsychUIEventHandler.Psych
 			lastMovable = tag;
 		}
 
-		// widget di uiGroup: rimescolo solo se il loro ordine relativo e' cambiato
+		// uiGroup widgets: reshuffle only if their relative order changed
 		var uiDef:Array<String> = [];
 		var byDef:Array<EditorMetaSprite> = [for (m in items) if (m.type == 'healthbar' || m.type == 'scoreText' || m.type == 'timeText' || m.type == 'timeBar') m];
 		byDef.sort(function(a:EditorMetaSprite, b:EditorMetaSprite):Int return a.defaultZ - b.defaultZ);
@@ -2939,52 +3191,52 @@ class HudEditorState extends MusicBeatState implements PsychUIEventHandler.Psych
 		var song:String = currentSongName();
 		var out:Array<String> = [];
 
-		// ---- HEADER obbligatorio (identico alla specifica) ----
+		// ---- REQUIRED header (identical to the spec) ----
 		out.push("-- ============================================================");
 		out.push("-- HUD Layout — generated by Psych Engine HUD Editor");
 		out.push("-- Song: " + song);
 		out.push("-- ============================================================");
 		out.push("--");
-		out.push("-- COME USARLO:");
-		out.push("--   Incolla questo codice in onCreatePost() del tuo");
-		out.push("--   data/songs/" + song + "/" + song + ".lua, oppure salvalo come");
-		out.push("--   " + song + "_hud.lua e caricalo con addLuaScript() in onCreatePost.");
+		out.push("-- HOW TO USE:");
+		out.push("--   Paste this code into onCreatePost() of your");
+		out.push("--   data/songs/" + song + "/" + song + ".lua, or save it as");
+		out.push("--   " + song + "_hud.lua and load it with addLuaScript() in onCreatePost.");
 		out.push("--");
-		out.push("-- ORDINE DI ESECUZIONE:");
-		out.push("--   Psych esegue i lua in sequenza e per le stesse proprietà vince");
-		out.push("--   l'ultimo che scrive. Se un altro script tocca gli stessi elementi");
-		out.push("--   DOPO questo codice, quel script vince. Non c'è merge automatico.");
-		out.push("--   Incolla DOPO le tue modifiche se vuoi che l'editor abbia");
-		out.push("--   l'ultima parola, PRIMA se vuoi che le tue vincano.");
+		out.push("-- EXECUTION ORDER:");
+		out.push("--   Psych runs the lua scripts in sequence and, for the same properties,");
+		out.push("--   the last one to write wins. If another script touches the same elements");
+		out.push("--   AFTER this code, that script wins. There is no automatic merge.");
+		out.push("--   Paste this AFTER your own changes if you want the editor to have");
+		out.push("--   the last word, BEFORE them if you want yours to win.");
 		out.push("--");
 		out.push("-- DRAW ORDER:");
-		out.push("--   L'ordine di disegno (zIndex) e' GLOBALE: una sola lista per tutto l'HUD,");
-		out.push("--   NON per categoria (strum, widget e overlay si possono interlacciare).");
-		out.push("--   Il codice emesso usa setObjectOrder per overlay e comboGroup e rimescola");
-		out.push("--   healthBar/scoreTxt/timeTxt/timeBar dentro uiGroup. Limite: noteGroup (strum+note),");
-		out.push("--   uiGroup e comboGroup restano nell'ordine fisso di Psych; gli strum non si");
-		out.push("--   riordinano tra loro (romperebbe strumLineNotes.members[i]).");
+		out.push("--   The draw order (zIndex) is GLOBAL: a single list for the whole HUD,");
+		out.push("--   NOT per category (strums, widgets and overlays can be interleaved).");
+		out.push("--   The emitted code uses setObjectOrder for overlays and comboGroup and reshuffles");
+		out.push("--   healthBar/scoreTxt/timeTxt/timeBar inside uiGroup. Limit: noteGroup (strums+notes),");
+		out.push("--   uiGroup and comboGroup stay in Psych's fixed order; strums are not");
+		out.push("--   reordered among themselves (it would break strumLineNotes.members[i]).");
 		out.push("--");
-		out.push("-- VERSIONE: testato su Psych 1.0.x vanilla. runHaxeCode per i");
-		out.push("-- widget nativi richiede HScript abilitato. I nomi interni");
-		out.push("-- (strumLineNotes, healthBar, ecc.) possono cambiare tra fork.");
+		out.push("-- VERSION: tested on vanilla Psych 1.0.x. runHaxeCode for the");
+		out.push("-- native widgets requires HScript to be enabled. Internal names");
+		out.push("-- (strumLineNotes, healthBar, etc.) may differ between forks.");
 		out.push("-- ============================================================");
 		out.push("");
 
-		// ---- Note dell'editor (aggiunte DOPO l'header obbligatorio) ----
-		out.push("-- NOTE DELL'EDITOR:");
-		out.push("--   * Modalita' assunta: downscroll=" + downscroll + ", middlescroll=" + middlescroll + ", 4K (il PlayState di questo fork e' solo 4K).");
-		out.push("--     I diff sono calcolati rispetto ai default di quella modalita'; le posizioni emesse sono assolute.");
-		out.push("--   * Strum: opponent = strumLineNotes 0-3, player = 4-7 (Psych 1.0.x vanilla; altri fork possono usare strumLineNotesP1/P2).");
-		out.push("--   * Gli strum esistono solo dopo startCountdown(): le loro posizioni statiche stanno in onCountdownStarted().");
-		out.push("--   * Se il tuo script ha GIA' onCreate/onCreatePost/onCountdownStarted/onBeatHit/onStepHit, in Lua resta solo l'ULTIMA");
-		out.push("--     definizione di ogni funzione: copia i CORPI dentro le tue funzioni invece di incollare le funzioni intere.");
-		out.push("--   * Un file " + song + "_hud.lua in data/songs/" + song + "/ viene caricato da Psych in automatico (non serve addLuaScript).");
-		out.push("--   * Il tween parte sempre dal valore A (impostato subito prima del tween) e arriva a B.");
-		out.push("--   * Tween a catena (3+ keyframe): runHaxeCode con FlxTween concatenati via onComplete; loop = riparte da A,");
-		out.push("--     yoyo = andata + ritorno ripetuti. Durata/easing sono per segmento.");
-		out.push("--   * Draw order: emesso solo se hai cambiato qualche zIndex rispetto al default (vedi DRAW ORDER nell'header).");
-		out.push("--   * comboGroup: i valori x/y sono uno SPOSTAMENTO rispetto alla posizione normale (il gruppo parte da 0,0).");
+		// ---- Editor notes (added AFTER the required header) ----
+		out.push("-- EDITOR NOTES:");
+		out.push("--   * Assumed mode: downscroll=" + downscroll + ", middlescroll=" + middlescroll + ", 4K (this fork's PlayState is 4K only).");
+		out.push("--     Diffs are computed against the defaults of that mode; emitted positions are absolute.");
+		out.push("--   * Strums: opponent = strumLineNotes 0-3, player = 4-7 (vanilla Psych 1.0.x; other forks may use strumLineNotesP1/P2).");
+		out.push("--   * Strums only exist after startCountdown(): their static positions live in onCountdownStarted().");
+		out.push("--   * If your script ALREADY has onCreate/onCreatePost/onCountdownStarted/onBeatHit/onStepHit, in Lua only the LAST");
+		out.push("--     definition of each function is kept: copy the BODIES into your own functions instead of pasting whole functions.");
+		out.push("--   * A file " + song + "_hud.lua in data/songs/" + song + "/ is loaded by Psych automatically (no addLuaScript needed).");
+		out.push("--   * A tween always starts from value A (set right before the tween) and goes to B.");
+		out.push("--   * Chain tweens (3+ keyframes): runHaxeCode with FlxTweens chained via onComplete; loop = restarts from A,");
+		out.push("--     yoyo = forward + back, repeated. Duration/easing are per segment.");
+		out.push("--   * Draw order: emitted only if you changed some zIndex from the default (see DRAW ORDER in the header).");
+		out.push("--   * comboGroup: the x/y values are an OFFSET from the normal position (the group starts at 0,0).");
 		out.push("");
 
 		// ---- Overlay (function onCreate) ----
@@ -2992,7 +3244,7 @@ class HudEditorState extends MusicBeatState implements PsychUIEventHandler.Psych
 		if (overlays.length > 0)
 		{
 			out.push("-- ------------------------------------------------------------");
-			out.push("-- OVERLAY IMPORTATI");
+			out.push("-- IMPORTED OVERLAYS");
 			out.push("-- ------------------------------------------------------------");
 			out.push("function onCreate()");
 			for (m in overlays)
@@ -3029,7 +3281,7 @@ class HudEditorState extends MusicBeatState implements PsychUIEventHandler.Psych
 			out.push("");
 		}
 
-		// ---- Raccolta: statici e tween ----
+		// ---- Collection: statics and tweens ----
 		var createPostStatic:Array<String> = [];
 		var countdownStatic:Array<String> = [];
 		for (m in items)
@@ -3045,7 +3297,7 @@ class HudEditorState extends MusicBeatState implements PsychUIEventHandler.Psych
 				target.push(l);
 		}
 
-		// ordine: per trigger, poi per beat, poi per creazione
+		// order: by trigger, then by beat, then by creation
 		var order:Array<Int> = [for (i in 0...hudTweens.length) i];
 		order.sort(function(a:Int, b:Int):Int
 		{
@@ -3083,7 +3335,7 @@ class HudEditorState extends MusicBeatState implements PsychUIEventHandler.Psych
 					flags.push(flag + ' = false');
 					var v:String = (t.trigger == 'onBeatHit') ? 'curBeat' : 'curStep';
 					var block:Array<String> = [];
-					block.push(body[0]); // commento del tween
+					block.push(body[0]); // the tween's comment line
 					block.push('if ' + v + ' == ' + t.triggerBeat + ' and not ' + flag + ' then');
 					block.push('\t' + flag + ' = true');
 					for (k in 1...body.length)
@@ -3114,7 +3366,7 @@ class HudEditorState extends MusicBeatState implements PsychUIEventHandler.Psych
 		if (createPostStatic.length > 0 || flags.length > 0 || createPostTweens.length > 0 || orderLines.length > 0)
 		{
 			out.push("-- ------------------------------------------------------------");
-			out.push("-- POSIZIONI STATICHE (solo cio' che differisce dal default)");
+			out.push("-- STATIC POSITIONS (only what differs from the default)");
 			out.push("-- ------------------------------------------------------------");
 			out.push("function onCreatePost()");
 			for (l in orderLines)
@@ -3124,14 +3376,14 @@ class HudEditorState extends MusicBeatState implements PsychUIEventHandler.Psych
 			if (flags.length > 0)
 			{
 				out.push("");
-				out.push("\t-- flag per tween one-shot");
+				out.push("\t-- flags for one-shot tweens");
 				for (l in flags)
 					out.push("\t" + l);
 			}
 			if (createPostTweens.length > 0)
 			{
 				out.push("");
-				out.push("\t-- tween avviati alla creazione");
+				out.push("\t-- tweens started on creation");
 				for (l in createPostTweens)
 					out.push(l);
 			}
@@ -3139,11 +3391,11 @@ class HudEditorState extends MusicBeatState implements PsychUIEventHandler.Psych
 			out.push("");
 		}
 
-		// ---- onCountdownStarted (gli strum esistono solo qui) ----
+		// ---- onCountdownStarted (strums only exist here) ----
 		if (countdownStatic.length > 0 || countdownTweens.length > 0)
 		{
-			out.push("-- Gli strum vengono creati in startCountdown(), DOPO onCreatePost:");
-			out.push("-- per questo le loro posizioni stanno qui.");
+			out.push("-- Strums are created in startCountdown(), AFTER onCreatePost:");
+			out.push("-- that is why their positions live here.");
 			out.push("function onCountdownStarted()");
 			for (l in countdownStatic)
 				out.push("\t" + l);
@@ -3153,7 +3405,7 @@ class HudEditorState extends MusicBeatState implements PsychUIEventHandler.Psych
 			out.push("");
 		}
 
-		// ---- Tween per trigger ----
+		// ---- Tweens per trigger ----
 		if (beatBlocks.length > 0 || stepBlocks.length > 0 || customNames.length > 0)
 		{
 			out.push("-- ------------------------------------------------------------");
@@ -3178,8 +3430,8 @@ class HudEditorState extends MusicBeatState implements PsychUIEventHandler.Psych
 		}
 		for (fn in customNames)
 		{
-			out.push("-- Funzione custom: NON viene chiamata automaticamente.");
-			out.push("-- Chiamala da questo script con " + fn + "() oppure da un altro script con callOnLuas('" + fn + "', {}).");
+			out.push("-- Custom function: NOT called automatically.");
+			out.push("-- Call it from this script with " + fn + "() or from another script with callOnLuas('" + fn + "', {}).");
 			out.push("function " + fn + "()");
 			for (l in customBodies.get(fn))
 				out.push(l);
@@ -3188,7 +3440,7 @@ class HudEditorState extends MusicBeatState implements PsychUIEventHandler.Psych
 		}
 
 		if (overlays.length < 1 && createPostStatic.length < 1 && countdownStatic.length < 1 && hudTweens.length < 1 && orderLines.length < 1)
-			out.push("-- (nessuna modifica: l'HUD e' ai valori di default)");
+			out.push("-- (no changes: the HUD is at its default values)");
 
 		return out.join('\n');
 	}
@@ -3251,7 +3503,7 @@ class HudEditorState extends MusicBeatState implements PsychUIEventHandler.Psych
 			}
 			if (tweenCaptureActive)
 			{
-				finishTweenCapture(); // ESC chiude la catena (il click destro la annulla)
+				finishTweenCapture(); // ESC closes the chain (right click cancels it)
 				return;
 			}
 			if (previewMeta != null)
@@ -3272,7 +3524,7 @@ class HudEditorState extends MusicBeatState implements PsychUIEventHandler.Psych
 		if (FlxG.keys.justPressed.F1)
 			helpBg.visible = helpTexts.visible = !helpBg.visible;
 
-		// H (solo fuori dai textfield: sopra c'e' gia' il return su PsychUIInputText.focusOn) come F2/F3
+		// H (only outside text fields: the return on PsychUIInputText.focusOn above already covers it) like F2/F3
 		if (#if FLX_DEBUG FlxG.keys.justPressed.F3 #else FlxG.keys.justPressed.F2 #end || FlxG.keys.justPressed.H)
 			togglePanels();
 
@@ -3282,7 +3534,7 @@ class HudEditorState extends MusicBeatState implements PsychUIEventHandler.Psych
 		if (FlxG.keys.justPressed.T)
 			setTweenCaptureMode(!tweenCaptureMode);
 
-		// W / S: elemento precedente / successivo
+		// W / S: previous / next element
 		if (listRefs.length > 0 && (FlxG.keys.justPressed.W || FlxG.keys.justPressed.S))
 		{
 			var dir:Int = FlxG.keys.justPressed.W ? -1 : 1;
@@ -3296,7 +3548,7 @@ class HudEditorState extends MusicBeatState implements PsychUIEventHandler.Psych
 
 		updateMouseObjectDrag();
 
-		// Movimento con frecce / tasto destro
+		// Movement with arrow keys / right mouse button
 		var shiftMult:Float = FlxG.keys.pressed.SHIFT ? 4 : 1;
 		var ctrlMult:Float = FlxG.keys.pressed.CONTROL ? 0.2 : 1;
 		var moveX:Float = 0;
@@ -3316,7 +3568,7 @@ class HudEditorState extends MusicBeatState implements PsychUIEventHandler.Psych
 			rightAccX = rightAccY = 0;
 		if (FlxG.mouse.pressedRight && !rightDownOnUI && (FlxG.mouse.deltaScreenX != 0 || FlxG.mouse.deltaScreenY != 0))
 		{
-			// pixel dello schermo = pixel del mondo (camHUD ha zoom 1); tengo i decimali
+			// screen pixels = world pixels (camHUD has zoom 1); keep the decimals
 			rightAccX += FlxG.mouse.deltaScreenX * ctrlMult;
 			rightAccY += FlxG.mouse.deltaScreenY * ctrlMult;
 			var stepX:Float = rightAccX < 0 ? Math.ceil(rightAccX) : Math.floor(rightAccX);
@@ -3335,10 +3587,17 @@ class HudEditorState extends MusicBeatState implements PsychUIEventHandler.Psych
 				stopPreview();
 				moveObjectTo(m, Math.round(m.x + moveX), Math.round(m.y + moveY));
 			}
+			else if (selectedGroup >= 0)
+			{
+				stopPreview();
+				shiftGroup(groupMembers(selectedGroup), moveX, moveY);
+				unsavedProgress = true;
+				refreshPosUI();
+			}
 		}
 	}
 
-	// Mostra/nasconde i pannelli (Setting/Object/Tween + lista). Sprite e selezione restano visibili.
+	// Shows/hides the panels (Settings/Object/Tween + list). Sprites and selection stay visible.
 	function togglePanels()
 	{
 		UI_box.visible = !UI_box.visible;
@@ -3350,6 +3609,20 @@ class HudEditorState extends MusicBeatState implements PsychUIEventHandler.Psych
 
 	function moveObjectTo(m:EditorMetaSprite, newX:Float, newY:Float)
 	{
+		if (inSelectedGroup(m))
+		{
+			// group selected: move all members by the same delta
+			var dx:Float = newX - m.x;
+			var dy:Float = newY - m.y;
+			for (g in groupMembers(selectedGroup))
+			{
+				g.x += dx;
+				g.y += dy;
+			}
+			unsavedProgress = true;
+			refreshPosUI();
+			return;
+		}
 		m.x = newX;
 		m.y = newY;
 		unsavedProgress = true;
@@ -3367,7 +3640,7 @@ class HudEditorState extends MusicBeatState implements PsychUIEventHandler.Psych
 		return false;
 	}
 
-	// Tutti gli elementi sotto il mouse: prima il selezionato, poi i piu' piccoli
+	// All elements under the mouse: the selected one first, then the smallest
 	function getObjectsAtMouse():Array<Int>
 	{
 		var found:Array<{index:Int, area:Float}> = [];
@@ -3391,14 +3664,14 @@ class HudEditorState extends MusicBeatState implements PsychUIEventHandler.Psych
 				return 1;
 			if (a.area != b.area)
 				return a.area < b.area ? -1 : 1;
-			return items[b.index].zIndex - items[a.index].zIndex; // a parita' di area vince quello disegnato sopra (zIndex)
+			return items[b.index].zIndex - items[a.index].zIndex; // on equal area, the one drawn on top wins (zIndex)
 		});
 		return [for (f in found) f.index];
 	}
 
 	function updateMouseObjectDrag()
 	{
-		// CLICK DESTRO senza trascinare = annulla la cattura, altrimenti deseleziona
+		// RIGHT CLICK without dragging = cancels the capture, otherwise deselects
 		if (FlxG.mouse.justPressedRight)
 		{
 			rightDownX = FlxG.mouse.screenX;
@@ -3412,7 +3685,7 @@ class HudEditorState extends MusicBeatState implements PsychUIEventHandler.Psych
 			{
 				if (tweenCaptureActive)
 					cancelTweenCapture();
-				else if (selectedIdx >= 0)
+				else if (selectedIdx >= 0 || selectedGroup >= 0)
 					deselectAll();
 			}
 		}
@@ -3426,7 +3699,7 @@ class HudEditorState extends MusicBeatState implements PsychUIEventHandler.Psych
 				return;
 			}
 
-			// posizione assoluta: il punto afferrato resta sotto il cursore
+			// absolute position: the grabbed point stays under the cursor
 			var newX:Float = Math.round(FlxG.mouse.screenX - dragPosX);
 			var newY:Float = Math.round(FlxG.mouse.screenY - dragPosY);
 			if (newX != dragSprite.x || newY != dragSprite.y)
@@ -3439,8 +3712,8 @@ class HudEditorState extends MusicBeatState implements PsychUIEventHandler.Psych
 
 		if (ctrl && FlxG.mouse.justPressed && !isMouseOverUI())
 		{
-			// Ctrl+click durante una cattura = salva il keyframe successivo (B, C, D...) e RESTA in cattura.
-			// Il drag riparte da qui, cosi' si puo' trascinare subito verso il keyframe dopo.
+			// Ctrl+click during a capture = saves the next keyframe (B, C, D...) and STAYS in capture.
+			// The drag restarts from here, so you can immediately drag toward the next keyframe.
 			if (tweenCaptureActive)
 			{
 				addCaptureKeyframe();
@@ -3460,7 +3733,7 @@ class HudEditorState extends MusicBeatState implements PsychUIEventHandler.Psych
 
 			if (candidates.length > 0)
 			{
-				// stesso punto cliccato di nuovo: passa al prossimo elemento sovrapposto
+				// same spot clicked again: cycle to the next overlapping element
 				var now:Float = haxe.Timer.stamp();
 				var sameSpot:Bool = Math.abs(FlxG.mouse.screenX - lastPickX) + Math.abs(FlxG.mouse.screenY - lastPickY) < 6
 					&& now - lastPickTime < 2 && !dragMoved;
@@ -3470,9 +3743,16 @@ class HudEditorState extends MusicBeatState implements PsychUIEventHandler.Psych
 				lastPickTime = now;
 				target = candidates[pickCycle % candidates.length];
 			}
+			else if (selectedGroup >= 0 && groupMembers(selectedGroup).length > 0)
+			{
+				// click on empty space with a group selected: drag the group
+				target = items.indexOf(groupMembers(selectedGroup)[0]);
+				pickCycle = 0;
+				lastPickX = -9999;
+			}
 			else if (selectedIdx >= 0)
 			{
-				// click nel vuoto: muove comunque l'elemento selezionato (movimento relativo)
+				// click on empty space: still moves the selected element (relative movement)
 				target = selectedIdx;
 				pickCycle = 0;
 				lastPickX = -9999;
@@ -3480,7 +3760,8 @@ class HudEditorState extends MusicBeatState implements PsychUIEventHandler.Psych
 
 			if (target >= 0)
 			{
-				if (target != selectedIdx)
+				var keepGroup:Bool = inSelectedGroup(items[target]);
+				if (target != selectedIdx && !keepGroup)
 					selectItem(target);
 				stopPreview();
 				dragSprite = items[target];
@@ -3490,7 +3771,12 @@ class HudEditorState extends MusicBeatState implements PsychUIEventHandler.Psych
 
 				// Ctrl+click in "Tween Capture Mode" = registra A
 				if (tweenCaptureMode)
-					beginTweenCapture(dragSprite);
+				{
+					if (keepGroup)
+						showOutput('Tween capture works on a single element: deselect the group first.', true);
+					else
+						beginTweenCapture(dragSprite);
+				}
 			}
 		}
 	}
@@ -3506,7 +3792,7 @@ class HudEditorState extends MusicBeatState implements PsychUIEventHandler.Psych
 				if (m.sprite != null && m.sprite.visible)
 					m.draw();
 
-			// ghost tratteggiati nelle posizioni dei keyframe gia' catturati (A, B, C...)
+			// dashed ghosts at the positions of the already captured keyframes (A, B, C...)
 			if (tweenCaptureActive && tweenCaptureTarget != null)
 			{
 				var tm:EditorMetaSprite = tweenCaptureTarget;
@@ -3514,6 +3800,14 @@ class HudEditorState extends MusicBeatState implements PsychUIEventHandler.Psych
 				for (gk in capKeys)
 					drawOutline(gr.x + (gk.x - tm.x), gr.y + (gk.y - tm.y), gr.w, gr.h, FlxColor.CYAN, 0.9, 2, true);
 				drawOutline(gr.x, gr.y, gr.w, gr.h, FlxColor.YELLOW, 0.9, 2, false);
+			}
+			else if (showSelectionQuad && selectedGroup >= 0)
+			{
+				for (gm in groupMembers(selectedGroup))
+				{
+					var gr2 = gm.getRect();
+					drawOutline(gr2.x, gr2.y, gr2.w, gr2.h, FlxColor.ORANGE, 0.9, 2, false);
+				}
 			}
 			else if (showSelectionQuad)
 			{
@@ -3582,13 +3876,13 @@ class HudEditorState extends MusicBeatState implements PsychUIEventHandler.Psych
 }
 
 // =======================================================================
-// Dati del tween: catena ordinata di keyframe (A, B, C...) per target
+// Tween data: ordered chain of keyframes (A, B, C...) per target
 // =======================================================================
 class HudTweenData
 {
 	public var targetType:String = 'overlay'; // "strum" | "overlay" | "widget"
-	public var targetName:String = ''; // "strum_0" | nome overlay | "healthBar" ecc.
-	public var targetIndex:Int = -1; // per gli strum: indice in strumLineNotes.members
+	public var targetName:String = ''; // "strum_0" | overlay name | "healthBar" etc.
+	public var targetIndex:Int = -1; // for strums: index in strumLineNotes.members
 
 	public var propX:Bool = true;
 	public var propY:Bool = true;
@@ -3596,10 +3890,10 @@ class HudTweenData
 	public var propAngle:Bool = false;
 	public var propScale:Bool = false;
 
-	// Catena ordinata di keyframe (minimo 2). Il segmento i-1 -> i usa duration/easing del keyframe i.
+	// Ordered chain of keyframes (minimum 2). Segment i-1 -> i uses the duration/easing of keyframe i.
 	public var keys:Array<HudKeyframe> = [];
 
-	// Default per i NUOVI segmenti (i valori reali stanno nei keyframe)
+	// Defaults for NEW segments (the real values live in the keyframes)
 	public var duration:Float = 1.0;
 	public var delay:Float = 0.0;
 	public var easing:String = 'quadInOut';
@@ -3607,11 +3901,11 @@ class HudTweenData
 	public var yoyo:Bool = false;
 	public var trigger:String = 'onBeatHit'; // "onCreatePost" | "onBeatHit" | "onStepHit" | "customFunction"
 	public var triggerBeat:Int = 0;
-	public var customFuncName:String = ''; // solo se trigger == "customFunction"
+	public var customFuncName:String = ''; // only if trigger == "customFunction"
 
 	public function new() {}
 
-	// copia le impostazioni (non i valori A/B ne' il target)
+	// copies the settings (not the A/B values nor the target)
 	public function copySettingsFrom(o:HudTweenData)
 	{
 		propX = o.propX;
@@ -3630,8 +3924,8 @@ class HudTweenData
 	}
 }
 
-// Un keyframe: stato dell'elemento + durata/easing del segmento che ARRIVA a questo keyframe
-// (per il primo keyframe, A, duration/easing non sono usati)
+// A keyframe: element state + duration/easing of the segment that ARRIVES at this keyframe
+// (for the first keyframe, A, duration/easing are not used)
 class HudKeyframe
 {
 	public var x:Float = 0;
@@ -3645,7 +3939,7 @@ class HudKeyframe
 	public function new() {}
 }
 
-// Segmento "piatto" per preview ed export (include i segmenti di ritorno dello yoyo)
+// "Flat" segment for preview and export (includes the yoyo return segments)
 typedef HudSeg =
 {
 	var x:Float;
@@ -3659,12 +3953,12 @@ typedef HudSeg =
 
 typedef HudPngEntry =
 {
-	var name:String; // percorso relativo a mods/images, senza estensione
+	var name:String; // path relative to mods/images, without extension
 	var hasXml:Bool;
 }
 
 // =======================================================================
-// Wrapper di un elemento dell'HUD (copia-adattato da StageEditorMetaSprite)
+// Wrapper of a HUD element (adapted from StageEditorMetaSprite)
 // type: "strum" | "healthbar" | "scoreText" | "timeText" | "timeBar" | "combo" | "overlay"
 // =======================================================================
 class EditorMetaSprite
@@ -3675,7 +3969,7 @@ class EditorMetaSprite
 	public var targetIndex:Int = -1;
 	public var isGroup:Bool = false;
 
-	// Draw order GLOBALE: default = ordine di creazione (comportamento invariato)
+	// GLOBAL draw order: default = creation order (unchanged behavior)
 	public static var zCounter:Int = 0;
 	public var zIndex:Int = 0;
 	public var defaultZ:Int = 0;
@@ -3706,7 +4000,7 @@ class EditorMetaSprite
 
 	public var scale:Array<Float> = [1, 1];
 
-	// solo overlay
+	// overlay only
 	public var animated:Bool = false;
 	public var animations:Array<AnimArray>;
 	public var firstAnimation:String;
@@ -3749,9 +4043,9 @@ class EditorMetaSprite
 	function get_flipY() return sprite.flipY;
 	function set_flipY(v:Bool) return (sprite.flipY = v);
 
-	// Per overlay (scaleObject di Psych fa updateHitbox) -> updHitbox = true.
-	// Per i widget nativi il gioco usa setProperty('x.scale.x') SENZA updateHitbox -> false,
-	// cosi' x/y significano la stessa cosa nell'editor e in gioco.
+	// For overlays (Psych's scaleObject does updateHitbox) -> updHitbox = true.
+	// For native widgets the game uses setProperty('x.scale.x') WITHOUT updateHitbox -> false,
+	// so x/y mean the same thing in the editor and in the game.
 	public function setScale(wid:Null<Float> = null, hei:Null<Float> = null, updHitbox:Bool = false)
 	{
 		scale[0] = (wid != null ? wid : scale[0]);
@@ -3787,7 +4081,7 @@ class EditorMetaSprite
 	public function tweenKind():String
 		return (type == 'strum') ? 'strum' : (type == 'overlay' ? 'overlay' : 'widget');
 
-	// Rettangolo (asse-allineato) occupato dall'elemento, in coordinate schermo
+	// Axis-aligned rectangle occupied by the element, in screen coordinates
 	public function getRect():{x:Float, y:Float, w:Float, h:Float}
 	{
 		var s:FlxSprite = sprite;
@@ -3813,7 +4107,7 @@ class EditorMetaSprite
 		return r.w * r.h;
 	}
 
-	// Hit test con rotazione e tolleranza (pad)
+	// Hit test with rotation and tolerance (pad)
 	public function hitTest(wx:Float, wy:Float, pad:Float):Bool
 	{
 		var s:FlxSprite = sprite;
