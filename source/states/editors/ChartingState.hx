@@ -7096,7 +7096,7 @@ class ChartingState extends MusicBeatState implements PsychUIEventHandler.PsychU
 
 	/**
 	 * Adds the notes of a MIDI to the chart that is already open (nothing is replaced).
-	 * side 1 = Dad -> lanes 4-7, side 0 = BF -> lanes 0-3. Pitch only decides the lane.
+	 * side 1 = Dad -> lanes 4-7, side 0 = BF -> lanes 0-3. The lane is random (1 arrow per row, see below).
 	 * Both MIDIs start at tick 0, so they line up with each other (no extra offset on either).
 	 */
 	function addMidiNotes(midi:MidiData, name:String, side:Int)
@@ -7138,22 +7138,64 @@ class ChartingState extends MusicBeatState implements PsychUIEventHandler.PsychU
 		for (sec in PlayState.SONG.notes)
 			if (sec.sectionNotes != null)
 				for (n in sec.sectionNotes)
-					existing.set(Std.int(n[1]) + '_' + Math.round(n[0]), true);
+					existing.set((Std.int(n[1]) >= 4 ? 1 : 0) + '_' + Math.round(n[0]), true); // per side + time (lane is random now)
 
 		var entries:Array<{sec:Int, data:Int, time:Float, sustain:Float}> = [];
 		var seen:Map<String, Bool> = new Map();
 		var maxSec:Int = 0;
 		var duplicates:Int = 0;
-		for (n in midi.notes)
+		// Random lanes (the pitch no longer decides the arrow), but:
+		//  - only ONE arrow per row: if the MIDI has a chord, the longest (then the highest) note is kept
+		//  - the same arrow is never used more than 2 times in a row
+		// The random generator is seeded from the file name + side, so importing the same file again gives the same chart.
+		var rngState:Int = 12345 + side * 777;
+		for (ci in 0...name.length)
+			rngState = (rngState * 31 + name.charCodeAt(ci)) & 0x3FFFFFFF;
+		var nextRand = function(max:Int):Int
 		{
-			var lane:Int = midiPitchToLane(n.pitch);
+			rngState = (rngState * 1103515245 + 12345) & 0x3FFFFFFF;
+			return (rngState >> 8) % max;
+		};
+		var lastLane:Int = -1;
+		var sameCount:Int = 0;
+		var chordsMerged:Int = 0;
+
+		var ni:Int = 0;
+		while (ni < midi.notes.length)
+		{
+			var n = midi.notes[ni];
+			var nj:Int = ni + 1;
+			while (nj < midi.notes.length && midi.notes[nj].tick == n.tick)
+			{
+				var c = midi.notes[nj];
+				var cd:Int = c.endTick - c.tick;
+				var bd:Int = n.endTick - n.tick;
+				if (cd > bd || (cd == bd && c.pitch > n.pitch))
+					n = c;
+				nj++;
+			}
+			chordsMerged += (nj - ni) - 1;
+			ni = nj;
+
+			var candidates:Array<Int> = [];
+			for (l in 0...4)
+				if (!(sameCount >= 2 && l == lastLane))
+					candidates.push(l);
+			var lane:Int = candidates[nextRand(candidates.length)];
+			if (lane == lastLane)
+				sameCount++;
+			else
+			{
+				lastLane = lane;
+				sameCount = 1;
+			}
 
 			var data:Int = lane + laneBase;
 			var step:Float = n.tick / midi.division * 4;
 			var time:Float = step * stepMs;
 
-			var key:String = data + '_' + n.tick;
-			if (seen.exists(key) || existing.exists(data + '_' + Math.round(time))) // same lane + same time
+			var key:String = side + '_' + n.tick;
+			if (seen.exists(key) || existing.exists(side + '_' + Math.round(time))) // already a note on this row
 			{
 				duplicates++;
 				continue;
@@ -7223,6 +7265,7 @@ class ChartingState extends MusicBeatState implements PsychUIEventHandler.PsychU
 
 		midiLastResult = '$sideName: added ${entries.length} notes from $shortName'
 			+ (duplicates > 0 ? ', $duplicates duplicates ignored' : '')
+			+ (chordsMerged > 0 ? ', $chordsMerged chord notes merged (1 arrow per row)' : '')
 			+ '.';
 		midiNotice = (notices.length > 0) ? notices.join('\n') : null;
 		refreshMidiPicker();
