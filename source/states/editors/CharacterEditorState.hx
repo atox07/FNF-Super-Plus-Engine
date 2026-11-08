@@ -212,6 +212,9 @@ class CharacterEditorState extends MusicBeatState implements PsychUIEventHandler
 			"W/S - Previous/Next Animation",
 			"Space - Replay Animation",
 			"Arrow Keys - Move Offset",
+			"Ctrl + Left Click & Drag - Move Offset (even if you miss the character)",
+			"Right Click & Drag - Move Offset (hold Ctrl for precision)",
+			"Alt + Left Click & Drag - Move the whole Character (position)",
 			"A/D - Frame Advance (Back/Forward)",
 			"",
 			"OTHER",
@@ -952,6 +955,8 @@ class CharacterEditorState extends MusicBeatState implements PsychUIEventHandler
 
 		if (!draggingCharacter)
 		{
+			if (ctrlDragging || altDragging || FlxG.keys.pressed.CONTROL || FlxG.keys.pressed.ALT)
+				return;
 			if (!isMouseOverUI() && FlxG.mouse.justPressed && FlxG.mouse.overlaps(character, camEditor))
 				draggingCharacter = true;
 			return;
@@ -984,6 +989,147 @@ class CharacterEditorState extends MusicBeatState implements PsychUIEventHandler
 
 		if (FlxG.mouse.justReleased)
 			draggingCharacter = false;
+	}
+
+	// ---- Ctrl + drag logic (same as the Stage Editor) ----
+	var ctrlDragging:Bool = false;
+	var ctrlGrabWorldX:Float = 0;
+	var ctrlGrabWorldY:Float = 0;
+	var ctrlGrabOffsetX:Float = 0;
+	var ctrlGrabOffsetY:Float = 0;
+	// Alt + drag = move the whole character (its position, not the animation offset)
+	var altDragging:Bool = false;
+	var altGrabWorldX:Float = 0;
+	var altGrabWorldY:Float = 0;
+	var altGrabPosX:Float = 0;
+	var altGrabPosY:Float = 0;
+	var rightAccX:Float = 0;
+	var rightAccY:Float = 0;
+	var rightDownOnUI:Bool = false;
+	final _mousePoint:FlxPoint = FlxPoint.get();
+
+	// Mouse position in the "space" of a sprite with a given scrollFactor.
+	// Zoom centered on the camera center: x = scroll*sf + size/2 + (screen - size/2) / zoom
+	function mouseToSpriteSpace(spr:FlxSprite, out:FlxPoint):FlxPoint
+	{
+		var cam:FlxCamera = FlxG.camera;
+		out.x = cam.scroll.x * spr.scrollFactor.x + cam.width / 2 + (FlxG.mouse.screenX - cam.width / 2) / cam.zoom;
+		out.y = cam.scroll.y * spr.scrollFactor.y + cam.height / 2 + (FlxG.mouse.screenY - cam.height / 2) / cam.zoom;
+		return out;
+	}
+
+	function setCurrentOffset(newX:Float, newY:Float):Void
+	{
+		var anim:AnimArray = (curAnim >= 0 && curAnim < anims.length) ? anims[curAnim] : null;
+		if (anim == null || anim.offsets == null)
+			return;
+
+		character.offset.x = newX;
+		character.offset.y = newY;
+		anim.offsets[0] = Std.int(character.offset.x);
+		anim.offsets[1] = Std.int(character.offset.y);
+		character.addOffset(anim.anim, character.offset.x, character.offset.y);
+		updateText();
+		unsavedProgress = true;
+	}
+
+	function handleCtrlMouseDrag():Void
+	{
+		if (character == null || character.scale.x == 0 || character.scale.y == 0 || helpBg.visible)
+		{
+			ctrlDragging = false;
+			altDragging = false;
+			return;
+		}
+
+		var flip:Float = character.flipX ? -1 : 1;
+
+		// RIGHT CLICK + DRAG = move the offset (relative, keeps the decimals so it follows the cursor)
+		if (FlxG.mouse.justPressedRight)
+		{
+			rightAccX = rightAccY = 0;
+			rightDownOnUI = isMouseOverUI();
+		}
+		if (FlxG.mouse.pressedRight && !rightDownOnUI && (FlxG.mouse.deltaScreenX != 0 || FlxG.mouse.deltaScreenY != 0))
+		{
+			var rMult:Float = FlxG.keys.pressed.CONTROL ? 0.2 : 1;
+			rightAccX += FlxG.mouse.deltaScreenX / FlxG.camera.zoom * rMult;
+			rightAccY += FlxG.mouse.deltaScreenY / FlxG.camera.zoom * rMult;
+			var stepX:Float = rightAccX < 0 ? Math.ceil(rightAccX) : Math.floor(rightAccX);
+			var stepY:Float = rightAccY < 0 ? Math.ceil(rightAccY) : Math.floor(rightAccY);
+			rightAccX -= stepX;
+			rightAccY -= stepY;
+			if (stepX != 0 || stepY != 0)
+				setCurrentOffset(character.offset.x - (stepX / character.scale.x) * flip, character.offset.y - stepY / character.scale.y);
+		}
+
+		// ALT + LEFT CLICK & DRAG = move the whole character (absolute: the grabbed point stays under the cursor)
+		if (altDragging)
+		{
+			if (!FlxG.keys.pressed.ALT || !FlxG.mouse.pressed)
+			{
+				altDragging = false;
+				return;
+			}
+
+			mouseToSpriteSpace(character, _mousePoint);
+			var newPosX:Float = Math.round(altGrabPosX + (_mousePoint.x - altGrabWorldX));
+			var newPosY:Float = Math.round(altGrabPosY + (_mousePoint.y - altGrabWorldY));
+			if (newPosX != character.positionArray[0] || newPosY != character.positionArray[1])
+			{
+				character.positionArray[0] = newPosX;
+				character.positionArray[1] = newPosY;
+				positionXStepper.value = newPosX;
+				positionYStepper.value = newPosY;
+				updateCharacterPositions();
+				unsavedProgress = true;
+			}
+			return;
+		}
+
+		var ctrl:Bool = FlxG.keys.pressed.CONTROL;
+		if (ctrlDragging)
+		{
+			if (!ctrl || !FlxG.mouse.pressed)
+			{
+				ctrlDragging = false;
+				return;
+			}
+
+			// Absolute position: the grabbed point stays under the cursor (independent of zoom/camera)
+			mouseToSpriteSpace(character, _mousePoint);
+			var dx:Float = (_mousePoint.x - ctrlGrabWorldX) / character.scale.x * flip;
+			var dy:Float = (_mousePoint.y - ctrlGrabWorldY) / character.scale.y;
+			var newX:Float = Math.round(ctrlGrabOffsetX - dx);
+			var newY:Float = Math.round(ctrlGrabOffsetY - dy);
+			if (newX != character.offset.x || newY != character.offset.y)
+				setCurrentOffset(newX, newY);
+			return;
+		}
+
+		if (!ctrl && FlxG.keys.pressed.ALT && FlxG.mouse.justPressed && !isMouseOverUI())
+		{
+			altDragging = true;
+			draggingCharacter = false;
+			mouseToSpriteSpace(character, _mousePoint);
+			altGrabWorldX = _mousePoint.x;
+			altGrabWorldY = _mousePoint.y;
+			altGrabPosX = character.positionArray[0];
+			altGrabPosY = character.positionArray[1];
+			return;
+		}
+
+		// CTRL + LEFT CLICK & DRAG = move the offset (even if you miss the character)
+		if (ctrl && FlxG.mouse.justPressed && !isMouseOverUI())
+		{
+			ctrlDragging = true;
+			draggingCharacter = false;
+			mouseToSpriteSpace(character, _mousePoint);
+			ctrlGrabWorldX = _mousePoint.x;
+			ctrlGrabWorldY = _mousePoint.y;
+			ctrlGrabOffsetX = character.offset.x;
+			ctrlGrabOffsetY = character.offset.y;
+		}
 	}
 
 	override function update(elapsed:Float)
@@ -1143,6 +1289,7 @@ class CharacterEditorState extends MusicBeatState implements PsychUIEventHandler
 			changedOffset = true;
 		}
 
+		handleCtrlMouseDrag();
 		if (ClientPrefs.data.dragCharacterToMove)
 			handleMouseDrag();
 
@@ -2143,6 +2290,9 @@ class CharacterEditorState extends MusicBeatState implements PsychUIEventHandler
 
 		isDragging = false;
 		draggingCharacter = false;
+		ctrlDragging = false;
+		altDragging = false;
+		_mousePoint.put();
 		super.destroy();
 	}
 }
