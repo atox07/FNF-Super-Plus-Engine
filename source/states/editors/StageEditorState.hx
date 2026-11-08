@@ -424,11 +424,11 @@ class StageEditorState extends MusicBeatState implements PsychUIEventHandler.Psy
 		phaseGroup = new FlxSpriteGroup();
 		phaseGroup.cameras = [camHUD];
 		phaseGroup.scrollFactor.set();
-		phaseTxt = new FlxText(25, 246, 250, '', 12);
+		phaseTxt = new FlxText(25, FlxG.height - 168, 250, '', 12); // under the sprite list
 		phaseTxt.scrollFactor.set();
 		phaseGroup.add(phaseTxt);
-		phaseGroup.add(new PsychUIButton(25, 284, '< Prev', function() stepPhase(-1)));
-		phaseGroup.add(new PsychUIButton(115, 284, 'Next >', function() stepPhase(1)));
+		phaseGroup.add(new PsychUIButton(25, FlxG.height - 128, '< Prev', function() stepPhase(-1)));
+		phaseGroup.add(new PsychUIButton(115, FlxG.height - 128, 'Next >', function() stepPhase(1)));
 		phaseGroup.visible = phaseGroup.active = false;
 		add(phaseGroup);
 
