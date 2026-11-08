@@ -263,9 +263,39 @@ jobs:
           show-progress: false
           set-safe-directory: false
 
-      - uses: krdlab/setup-haxe@v2
+      - name: Setup Haxe
+        id: setup_haxe
+        continue-on-error: true
+        uses: krdlab/setup-haxe@v2
         with:
           haxe-version: 4.3.7
+
+      # Fallback: setup-haxe downloads Neko from GitHub Releases, which can fail with HTTP 504.
+      # If that happens, install Haxe 4.3.7 (which also provides haxelib) from Chocolatey instead.
+      - name: Setup Haxe (Chocolatey fallback)
+        if: steps.setup_haxe.outcome == 'failure'
+        shell: pwsh
+        run: |
+          choco install haxe --version 4.3.7 -y --no-progress
+          if ($LASTEXITCODE -ne 0) { throw "choco install haxe failed (exit code $LASTEXITCODE)" }
+
+          $exe = Get-ChildItem -Path 'C:\HaxeToolkit', "$env:ChocolateyInstall\lib\haxe" -Recurse -Filter haxe.exe -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $exe) { throw "haxe.exe not found after Chocolatey install" }
+          $haxeDir = $exe.DirectoryName
+
+          $neko = Get-ChildItem -Path $haxeDir, 'C:\HaxeToolkit', "$env:ChocolateyInstall\lib\neko", "$env:ChocolateyInstall\lib\haxe" -Recurse -Filter neko.dll -ErrorAction SilentlyContinue | Select-Object -First 1
+          $nekoDir = if ($neko) { $neko.DirectoryName } else { $haxeDir }
+
+          Add-Content -Path $env:GITHUB_PATH -Value $haxeDir -Encoding utf8
+          Add-Content -Path $env:GITHUB_PATH -Value $nekoDir -Encoding utf8
+          Add-Content -Path $env:GITHUB_ENV -Value "HAXEPATH=$haxeDir" -Encoding utf8
+          Add-Content -Path $env:GITHUB_ENV -Value "HAXE_STD_PATH=$haxeDir\std" -Encoding utf8
+          Add-Content -Path $env:GITHUB_ENV -Value "NEKOPATH=$nekoDir" -Encoding utf8
+
+          $env:PATH = "$haxeDir;$nekoDir;$env:PATH"
+          $env:NEKOPATH = $nekoDir
+          haxe --version
+          haxelib version
 
       - name: Install libraries
         run: |
