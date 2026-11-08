@@ -4952,6 +4952,17 @@ class ChartingState extends MusicBeatState implements PsychUIEventHandler.PsychU
 		btn.text.alignment = LEFT;
 		tab_group.add(btn);
 
+		#if desktop
+		btnY += 20;
+		var coverButton = new PsychUIButton(btnX, btnY, '  Cover Maker', function()
+		{
+			setSongPlaying(false);
+			openSubState(new CoverMaker(PlayState.SONG.song, PlayState.SONG.bpm));
+		}, btnWid);
+		coverButton.text.alignment = LEFT;
+		tab_group.add(coverButton);
+		#end
+
 		btnY += 20;
 		var btn:PsychUIButton = new PsychUIButton(btnX, btnY, '  Custom Events...', function()
 		{
@@ -5764,6 +5775,8 @@ class ChartingState extends MusicBeatState implements PsychUIEventHandler.PsychU
 		}, btnWid);
 		btn.text.alignment = LEFT;
 		tab_group.add(btn);
+
+
 
 		btnY += 20;
 		var btn:PsychUIButton = new PsychUIButton(btnX, btnY, '  Go to...', function()
