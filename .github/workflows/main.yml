@@ -263,7 +263,7 @@ jobs:
           show-progress: false
           set-safe-directory: false
 
-      - uses: krdlab/setup-haxe@master
+      - uses: krdlab/setup-haxe@v2
         with:
           haxe-version: 4.3.7
 
@@ -317,7 +317,7 @@ jobs:
           show-progress: false
           set-safe-directory: false
 
-      - uses: krdlab/setup-haxe@master
+      - uses: krdlab/setup-haxe@v2
         with:
           haxe-version: 4.3.7
 
@@ -371,7 +371,7 @@ jobs:
           show-progress: false
           set-safe-directory: false
 
-      - uses: krdlab/setup-haxe@master
+      - uses: krdlab/setup-haxe@v2
         with:
           haxe-version: 4.3.7
 
@@ -425,7 +425,7 @@ jobs:
           show-progress: false
           set-safe-directory: false
 
-      - uses: krdlab/setup-haxe@master
+      - uses: krdlab/setup-haxe@v2
         with:
           haxe-version: 4.3.7
 
