@@ -24,7 +24,7 @@ import states.editors.CoverMidi.CoverNote;
 	Cover Maker - interfaccia Flixel in stile FNF.
 	Motore audio e MIDI: CoverVoice / CoverMidi (invariati, piu' preview di nota e sliceCount).
 
-	Layout: 3 file di bottoni | righello | Inst | Dad | BF | piano roll della traccia selezionata.
+	Layout: menu bar | ruler | Dad | BF | Inst | piano roll of the selected track.
 **/
 class CoverMaker extends MusicBeatSubstate
 {
@@ -45,7 +45,29 @@ class CoverMaker extends MusicBeatSubstate
 	static inline var MENU_W:Int = 84;
 	static inline var MENU_ITEM_W:Int = 220;
 	static inline var MENU_ITEM_H:Int = 22;
-	static inline var MENU_LAYER_H:Int = 280;
+	static inline var MENU_LAYER_H:Int = 420;
+
+	// ---- slicer layout ----
+	static inline var SL_TOP:Int = 118;
+	static inline var TOOL_X:Int = 300;
+	static inline var TOOL_W:Int = 144;
+	static final SL_TOOLS:Array<String> = ['Manual: reset', 'Auto: transients', 'Auto: silence'];
+	static inline var SL_RULER_Y:Int = 142;
+	static inline var SL_WAVE_Y:Int = 164;
+	static inline var SL_WAVE_H:Int = 340;
+	static inline var SL_STRIP_Y:Int = 508;
+	static inline var SL_STRIP_H:Int = 24;
+
+	// ---- song list (File > Songs) ----
+	static inline var SONG_ROWS:Int = 14;
+	static inline var SONG_W:Int = 380;
+
+	static final HINT_ROLL:String = 'SPACE play/pause | ENTER stop | TAB slicer | ESC close | DEL delete | click ruler = move cursor | drag Dad/BF lane = move pattern\n'
+		+ 'Piano roll: click = new note, drag = move, right edge = resize, right click = delete | wheel = scroll, CTRL+wheel = zoom, SHIFT+wheel = octave\n'
+		+ 'Select a note, then SLIDE (top right) turns it into a pitch glide; press it again to make it a normal note. - / + change the glide amount.';
+	static final HINT_SLICER:String = 'SPACE play/pause | TAB back to piano roll | DEL delete slice | click slice = select + preview | SHIFT+click = cut here | drag a slice edge = resize\n'
+		+ 'Right click = delete slice | wheel = scroll | CTRL+wheel = zoom | Ruler: click to add, drag to move, right-click a marker to merge\n'
+		+ 'Every slice is a key: slice N plays on note (root + N). Highlighted rows in the piano roll show which keys have a slice.';
 
 	// ---- colori ----
 	static inline var BG:Int = 0xFF14161F;
@@ -113,6 +135,19 @@ class CoverMaker extends MusicBeatSubstate
 	var menuLayer:FlxSprite;
 	var mpool:Array<FlxText> = [];
 	var mpoolIdx:Int = 0;
+	var hintText:FlxText;
+	var lastSlide:Int = 5;
+
+	// ---- slicer state ----
+	var slicerOpen:Bool = false;
+	var slView0:Float = 0;
+	var slSpan:Float = 2000;
+	var slSel:Int = -1;
+
+	// ---- song list state ----
+	var songsOpen:Bool = false;
+	var songScroll:Int = 0;
+	var songHover:Int = -1;
 	var parentState:FlxState;
 	var parentDraw:Bool = true;
 	var parentUpdate:Bool = false;
@@ -157,9 +192,10 @@ class CoverMaker extends MusicBeatSubstate
 		voiceSnd = [newSound(), newSound()];
 		previewSnd = newSound();
 
-		for (i in 0...44)
+		for (i in 0...160)
 		{
-			var t:FlxText = mkText(0, 0, 120, '', 12, FlxColor.WHITE);
+			var t:FlxText = mkText(0, 0, 900, '', 12, FlxColor.WHITE);
+			t.wordWrap = false;
 			t.visible = false;
 			pool.push(t);
 			add(t);
@@ -174,18 +210,15 @@ class CoverMaker extends MusicBeatSubstate
 		infoText = mkText(10, 94, FlxG.width - 20, '', 13, 0xFFB8C0D8);
 		add(infoText);
 
-		var hint:FlxText = mkText(10, ROLL_Y + ROWS * ROW_H + 6, FlxG.width - 20,
-			'SPACE play/pausa | ENTER stop | ESC chiudi | DEL cancella nota | click righello = sposta cursore | trascina corsia Dad/BF = sposta pattern\n'
-			+ 'Piano roll: click = nuova nota, trascina = sposta, bordo destro = allunga, click destro = elimina | rotella = scorri, CTRL+rotella = zoom, SHIFT+rotella = ottava',
-			12, 0xFF7F88A8);
-		hint.wordWrap = true;
-		add(hint);
+		hintText = mkText(10, ROLL_Y + ROWS * ROW_H + 2, FlxG.width - 20, HINT_ROLL, 12, 0xFF7F88A8);
+		hintText.wordWrap = true;
+		add(hintText);
 
 		// Barra dei menu: sempre sopra tutto il resto (overlay + testi propri)
 		menuLayer = new FlxSprite(0, 0).makeGraphic(FlxG.width, MENU_LAYER_H, 0x00000000, true);
 		menuLayer.scrollFactor.set();
 		add(menuLayer);
-		for (i in 0...20)
+		for (i in 0...44)
 		{
 			var t:FlxText = mkText(0, 0, 260, '', 13, FlxColor.WHITE);
 			t.wordWrap = false;
@@ -204,7 +237,7 @@ class CoverMaker extends MusicBeatSubstate
 		catch (e:Dynamic)
 			setStatus(Std.string(e));
 
-		setStatus('Carica un MIDI e una voce per Dad e BF. La voce viene tagliata nei silenzi: la nota root + N suona la fetta N.');
+		setStatus('Load a MIDI and a voice for Dad and BF. Use the slicer ruler or Auto buttons to place markers.');
 		updateInfo();
 		dirty = true;
 	}
@@ -234,9 +267,9 @@ class CoverMaker extends MusicBeatSubstate
 				name: 'File',
 				items: [
 					it('Inst file...', function() pick('ogg,wav', function(p) loadInstPath(p))),
-					it('Songs >', nextSong, true),
-					it('Open progetto...', function() project(false)),
-					it('Save progetto...', function() project(true)),
+					it('Songs >', toggleSongs, true),
+					it('Open project...', function() project(false)),
+					it('Save project...', function() project(true)),
 					it('Export stems', function() exportAudio(true)),
 					it('Export mix', function() exportAudio(false)),
 					it('Close (ESC)', closeCover)
@@ -264,7 +297,36 @@ class CoverMaker extends MusicBeatSubstate
 				name: 'View',
 				items: [
 					it('Octave -', function() { low = Std.int(Math.max(0, low - 12)); dirty = true; }, true),
-					it('Octave +', function() { low = Std.int(Math.min(104, low + 12)); dirty = true; }, true)
+					it('Octave +', function() { low = Std.int(Math.min(104, low + 12)); dirty = true; }, true),
+					it('Slicer on/off (TAB)', toggleSlicer)
+				]
+			},
+			{
+				name: 'Slicer',
+				items: [
+					it('Open / close (TAB)', toggleSlicer),
+					it('Load WAV...', function() importVoice(track)),
+					it('Switch track Dad/BF', function() choose(1 - track), true),
+					it('Manual: reset markers', manualSlices),
+					it('Detect: transients', runTransients, true),
+					it('Detect: silence', runSilence, true),
+					it('Sensitivity -', function() changeSens(-0.05), true),
+					it('Sensitivity +', function() changeSens(0.05), true),
+					it('Threshold -', function() changeThreshold(-0.005), true),
+					it('Threshold +', function() changeThreshold(0.005), true),
+					it('Preview slice', function() previewSlice(slSel), true),
+					it('Delete slice (DEL)', deleteSlice, true),
+					it('Merge with next slice', mergeSlice, true),
+					it('Clear all slices', clearAllSlices, true)
+				]
+			},
+			{
+				name: 'Note',
+				items: [
+					it('Toggle slide', toggleSlide, true),
+					it('Slide amount -', function() changeSlide(-1), true),
+					it('Slide amount +', function() changeSlide(1), true),
+					it('Delete note (DEL)', deleteNote, true)
 				]
 			},
 			{
@@ -272,10 +334,6 @@ class CoverMaker extends MusicBeatSubstate
 				items: [
 					it('Root -', function() changeRoot(-1), true),
 					it('Root +', function() changeRoot(1), true),
-					it('Threshold -', function() changeThreshold(-0.005), true),
-					it('Threshold +', function() changeThreshold(0.005), true),
-					it('Slide -', function() changeSlide(-1), true),
-					it('Slide +', function() changeSlide(1), true),
 					it('Mute track', function() { voices[track].muted = !voices[track].muted; refreshAudio(); dirty = true; }, true)
 				]
 			}
@@ -326,8 +384,75 @@ class CoverMaker extends MusicBeatSubstate
 		t.visible = true;
 	}
 
+	inline function slideX():Int
+		return FlxG.width - 160;
+
+	/** 1 = '-', 2 = toggle, 3 = '+', 0 = none. */
+	function slideBtnAt(mx:Float, my:Float):Int
+	{
+		var x:Int = slideX();
+		if (my < MENU_Y + 1 || my >= MENU_Y + MENU_H - 1 || mx < x || mx >= x + 150)
+			return 0;
+		if (mx < x + 24)
+			return 1;
+		if (mx >= x + 126)
+			return 3;
+		return 2;
+	}
+
+	inline function songsX():Int
+		return menuHeaderX(0) + MENU_ITEM_W + 4;
+
+	inline function songsY():Int
+		return MENU_Y + MENU_H + 2;
+
+	function songRows():Int
+		return Std.int(Math.max(0, Math.min(SONG_ROWS, catalog.length - songScroll)));
+
+	function songAt(mx:Float, my:Float):Int
+	{
+		if (!songsOpen)
+			return -1;
+		var x:Int = songsX();
+		var y:Int = songsY();
+		if (mx < x || mx >= x + SONG_W || my < y || my >= y + songRows() * MENU_ITEM_H)
+			return -1;
+		return Std.int((my - y) / MENU_ITEM_H);
+	}
+
+	function inSongPanel(mx:Float, my:Float):Bool
+	{
+		if (!songsOpen)
+			return false;
+		var x:Int = songsX();
+		var y:Int = songsY();
+		return mx >= x && mx < x + SONG_W && my >= y && my < y + (songRows() + 1) * MENU_ITEM_H;
+	}
+
+	function songLabel(p:String):String
+	{
+		var parts:Array<String> = StringTools.replace(p, '\\', '/').split('/');
+		var name:String = parts.length >= 2 ? parts[parts.length - 2] : p;
+		var src:String = (parts[0] == 'mods' && parts.length > 4) ? parts[1] : parts[0];
+		return name + '   (' + src + ')';
+	}
+
+	function toggleSongs()
+	{
+		if (catalog.length == 0)
+			scanSongs();
+		if (catalog.length == 0)
+			throw 'No Inst found in assets/songs or mods';
+		songsOpen = !songsOpen;
+		var maxS:Int = Std.int(Math.max(0, catalog.length - SONG_ROWS));
+		songScroll = Std.int(Math.max(0, Math.min(maxS, songIndex - 4)));
+		redrawMenu();
+	}
+
 	function redrawMenu()
 	{
+		if (menuLayer == null)
+			return;
 		var bd = menuLayer.pixels;
 		bd.lock();
 		mpoolIdx = 0;
@@ -345,6 +470,17 @@ class CoverMaker extends MusicBeatSubstate
 			mlbl(x + 8, MENU_Y + 4, menus[i].name, on ? 0xFFFFFFFF : 0xFFB8C0D8);
 		}
 
+		// SLIDE button (top right): turns the selected note into a slide / back to normal
+		var bx:Int = slideX();
+		var hasSel:Bool = selected != null;
+		var sl:Int = hasSel ? selected.slide : 0;
+		menuBox(bx, MENU_Y + 1, 24, MENU_H - 2, 0xFF2B3248);
+		menuBox(bx + 26, MENU_Y + 1, 98, MENU_H - 2, sl != 0 ? 0xFFFF8A3D : (hasSel ? 0xFF3C4766 : 0xFF2B3248));
+		menuBox(bx + 126, MENU_Y + 1, 24, MENU_H - 2, 0xFF2B3248);
+		mlbl(bx + 8, MENU_Y + 4, '-', 0xFFFFFFFF);
+		mlbl(bx + 134, MENU_Y + 4, '+', 0xFFFFFFFF);
+		mlbl(bx + 32, MENU_Y + 4, sl != 0 ? 'SLIDE ' + (sl > 0 ? '+' : '') + sl : 'SLIDE', sl != 0 ? 0xFF111111 : (hasSel ? 0xFFFFFFFF : 0xFF7F88A8));
+
 		if (menuOpen >= 0)
 		{
 			var x:Int = menuHeaderX(menuOpen);
@@ -360,6 +496,26 @@ class CoverMaker extends MusicBeatSubstate
 			}
 		}
 
+		if (songsOpen && menuOpen == 0)
+		{
+			var x:Int = songsX();
+			var y:Int = songsY();
+			var rows:Int = songRows();
+			menuBox(x - 1, y - 1, SONG_W + 2, (rows + 1) * MENU_ITEM_H + 2, 0xFF7F88A8);
+			menuBox(x, y, SONG_W, (rows + 1) * MENU_ITEM_H, 0xFF20243A);
+			for (j in 0...rows)
+			{
+				var idx:Int = songScroll + j;
+				if (songHover == j)
+					menuBox(x, y + j * MENU_ITEM_H, SONG_W, MENU_ITEM_H, 0xFF3C4766);
+				mlbl(x + 10, y + j * MENU_ITEM_H + 3, (idx == songIndex ? '> ' : '  ') + songLabel(catalog[idx]), songHover == j ? 0xFFFFFFFF : 0xFFD0D6EA);
+			}
+			if (catalog.length > SONG_ROWS)
+				mlbl(x + 10, y + rows * MENU_ITEM_H + 3, 'wheel = scroll   (' + (songScroll + 1) + '-' + (songScroll + rows) + ' / ' + catalog.length + ')', 0xFF7F88A8);
+			else
+				mlbl(x + 10, y + rows * MENU_ITEM_H + 3, catalog.length + ' songs', 0xFF7F88A8);
+		}
+
 		for (i in mpoolIdx...mpool.length)
 			mpool[i].visible = false;
 		bd.unlock();
@@ -370,22 +526,42 @@ class CoverMaker extends MusicBeatSubstate
 	{
 		if (open == menuOpen && hover == menuHover)
 			return;
+		if (open != menuOpen)
+		{
+			songsOpen = false;
+			songHover = -1;
+		}
 		menuOpen = open;
 		menuHover = hover;
 		redrawMenu();
 	}
 
-	/** Gestisce hover e click sui menu. Ritorna true se il click e' stato consumato. */
+	/** Handles hover and clicks on the menu bar. Returns true if the click was consumed. */
 	function menuInput(mx:Float, my:Float):Bool
 	{
 		var h:Int = headerAt(mx, my);
 		var ii:Int = itemAt(mx, my);
+		var si:Int = songAt(mx, my);
 
-		// hover
+		// hover (with a dropdown open, moving over another header opens that one)
 		if (h >= 0)
-			setMenu(menuOpen >= 0 ? h : menuOpen, -2 - h); // con tendina aperta, passare sopra un'altra voce la apre
+			setMenu(menuOpen >= 0 ? h : menuOpen, -2 - h);
 		else
 			setMenu(menuOpen, ii);
+		if (si != songHover)
+		{
+			songHover = si;
+			redrawMenu();
+		}
+
+		// wheel over the song list scrolls it
+		if (songsOpen && FlxG.mouse.wheel != 0 && inSongPanel(mx, my))
+		{
+			var maxS:Int = Std.int(Math.max(0, catalog.length - SONG_ROWS));
+			songScroll = Std.int(Math.max(0, Math.min(maxS, songScroll - FlxG.mouse.wheel * 2)));
+			redrawMenu();
+			return true;
+		}
 
 		if (FlxG.mouse.justPressedRight && menuOpen >= 0)
 		{
@@ -394,6 +570,41 @@ class CoverMaker extends MusicBeatSubstate
 		}
 		if (!FlxG.mouse.justPressed)
 			return false;
+
+		// SLIDE button
+		var sb:Int = slideBtnAt(mx, my);
+		if (sb > 0)
+		{
+			setMenu(-1, -1);
+			try
+			{
+				if (sb == 1)
+					changeSlide(-1);
+				else if (sb == 3)
+					changeSlide(1);
+				else
+					toggleSlide();
+			}
+			catch (e:Dynamic)
+				setStatus(Std.string(e));
+			return true;
+		}
+
+		// song list
+		if (songsOpen && inSongPanel(mx, my))
+		{
+			if (si >= 0)
+			{
+				var idx:Int = songScroll + si;
+				songIndex = idx;
+				setMenu(-1, -1);
+				try
+					loadInstPath(catalog[idx])
+				catch (e:Dynamic)
+					setStatus(Std.string(e));
+			}
+			return true;
+		}
 
 		if (h >= 0)
 		{
@@ -439,10 +650,23 @@ class CoverMaker extends MusicBeatSubstate
 	function updateInfo()
 	{
 		var v:CoverVoice = voices[track];
-		infoText.text = 'Traccia: ${track == 0 ? "Dad" : "BF"}${v.muted ? " [MUTE]" : ""}   voce: ${v.source == "" ? "(nessuna)" : v.source}   '
-			+ 'fette: ${v.sliceCount()}   root: ${v.root}   soglia: ${Math.round(v.threshold * 1000) / 1000}   note: ${v.notes.length}   '
+		infoText.text = 'Track: ${track == 0 ? "Dad" : "BF"}${v.muted ? " [MUTE]" : ""}   voice: ${v.source == "" ? "(none)" : baseName(v.source)}   '
+			+ 'slices: ${v.sliceCount()} (${v.mode})   root: ${v.root}   threshold: ${Math.round(v.threshold * 1000) / 1000}   notes: ${v.notes.length}   '
 			+ 'BPM: ${Math.round(projectBpm * 100) / 100}';
+		redrawMenu();
 	}
+
+	function baseName(p:String):String
+	{
+		var parts:Array<String> = StringTools.replace(p, '\\', '/').split('/');
+		return parts[parts.length - 1];
+	}
+
+	function fixed(x:Float):String
+		return Std.string(Math.round(x * 1000) / 1000);
+
+	function noteName(p:Int):String
+		return ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'][p % 12] + Std.int(p / 12);
 
 	function fmt(t:Float):String
 	{
@@ -455,7 +679,7 @@ class CoverMaker extends MusicBeatSubstate
 		return (X1 - X0) / secondsPerPage;
 
 	inline function mouseTime():Float
-		return page + (FlxG.mouse.x - X0) / pps();
+		return page + (mouseX() - X0) / pps();
 
 	inline function cur():CoverVoice
 		return voices[track];
@@ -467,6 +691,8 @@ class CoverMaker extends MusicBeatSubstate
 	{
 		track = i;
 		selected = null;
+		slSel = -1;
+		slicerFit();
 		updateInfo();
 		dirty = true;
 	}
@@ -511,7 +737,7 @@ class CoverMaker extends MusicBeatSubstate
 	{
 		var s:Sound = Sound.fromFile(p);
 		if (s == null)
-			throw 'Audio non caricato: $p';
+			throw 'Audio not loaded: $p';
 		setInst(s, p);
 		setStatus('Instrumental: $p');
 	}
@@ -539,7 +765,7 @@ class CoverMaker extends MusicBeatSubstate
 		if (catalog.length == 0)
 			scanSongs();
 		if (catalog.length == 0)
-			throw 'Nessun Inst trovato in assets/songs o mods';
+			throw 'No Inst found in assets/songs or mods';
 		songIndex = (songIndex + 1) % catalog.length;
 		loadInstPath(catalog[songIndex]);
 	}
@@ -553,16 +779,18 @@ class CoverMaker extends MusicBeatSubstate
 			if (ns.length > 0)
 				low = Std.int(Math.min(104, Math.max(0, ns[0].pitch - 8)));
 			edited(i);
-			setStatus(ns.length + ' note importate per ' + (i == 0 ? 'Dad' : 'BF'));
+			setStatus(ns.length + ' notes imported for ' + (i == 0 ? 'Dad' : 'BF'));
 		});
 
 	function importVoice(i:Int)
 		pick('wav,ogg', function(p)
 		{
-			voices[i].load(p);
+			voices[i].load(p, true);
 			choose(i);
+			slicerOpen = true; // show the freshly sliced sample right away
+			updateHint();
 			edited(i);
-			setStatus('Voce ' + (i == 0 ? 'Dad' : 'BF') + ': ' + p + ' (' + voices[i].sliceCount() + ' fette)');
+			setStatus('Voice ' + (i == 0 ? 'Dad' : 'BF') + ': ' + p + ' (click ruler to add markers, or choose Auto)');
 		});
 
 	function changeRoot(d:Int)
@@ -576,17 +804,401 @@ class CoverMaker extends MusicBeatSubstate
 	{
 		var v:CoverVoice = cur();
 		v.threshold = Math.max(0.001, Math.min(0.95, v.threshold + d));
-		v.slice();
+		v.resliceAuto();
+		if (v.mode != 'manual') slSel = -1;
 		edited(track);
 	}
 
 	function changeSlide(d:Int)
 	{
 		if (selected == null)
+		{
+			setStatus('Select a note first');
 			return;
+		}
 		selected.slide += d;
+		if (selected.slide != 0)
+			lastSlide = selected.slide;
 		edited(track);
-		setStatus('Slide ' + selected.slide + ' semitoni sulla nota');
+		setStatus(selected.slide == 0 ? 'Normal note' : 'Slide ' + (selected.slide > 0 ? '+' : '') + selected.slide + ' semitones on note');
+		previewNote(selected);
+	}
+
+	/** SLIDE button: selected note becomes a slide, pressed again it is a normal note. */
+	function toggleSlide()
+	{
+		if (selected == null)
+		{
+			setStatus('Select a note first, then press SLIDE');
+			return;
+		}
+		if (selected.slide != 0)
+		{
+			lastSlide = selected.slide;
+			selected.slide = 0;
+			setStatus('Normal note');
+		}
+		else
+		{
+			selected.slide = lastSlide;
+			setStatus('Slide note: ' + (lastSlide > 0 ? '+' : '') + lastSlide + ' semitones (use - / + to change)');
+		}
+		edited(track);
+		previewNote(selected);
+	}
+
+	function deleteNote()
+	{
+		if (selected == null)
+			return;
+		cur().notes.remove(selected);
+		selected = null;
+		edited(track);
+	}
+
+	// ------------------------------------------------------------------
+	// slicer
+	// ------------------------------------------------------------------
+	function toggleSlicer()
+	{
+		slicerOpen = !slicerOpen;
+		slicerFit();
+		updateHint();
+		dirty = true;
+	}
+
+	function updateHint()
+	{
+		if (hintText != null)
+			hintText.text = slicerOpen ? HINT_SLICER : HINT_ROLL;
+	}
+
+	function slicerFit()
+	{
+		slView0 = 0;
+		slSpan = Math.max(2000, cur().sampleCount());
+	}
+
+	function slicerClamp()
+	{
+		var total:Float = Math.max(2000, cur().sampleCount());
+		slSpan = Math.max(200, Math.min(total, slSpan));
+		slView0 = Math.max(0, Math.min(total - slSpan, slView0));
+	}
+
+	inline function sx(x:Float):Float
+		return slView0 + (x - X0) / (X1 - X0) * slSpan;
+
+	inline function xs(smp:Float):Float
+		return X0 + (smp - slView0) / slSpan * (X1 - X0);
+
+	function needVoice():CoverVoice
+	{
+		var v:CoverVoice = cur();
+		if (v.source == '')
+			throw 'Load a WAV first (Slicer > Load WAV...)';
+		return v;
+	}
+
+	function manualSlices()
+	{
+		var v = needVoice();
+		v.resetMarkers();
+		slSel = 0;
+		edited(track);
+		setStatus('Manual slicing: click the ruler to add a marker.');
+	}
+
+	function runTransients()
+	{
+		var v:CoverVoice = needVoice();
+		v.detectTransients();
+		slSel = -1;
+		edited(track);
+		setStatus('Transients: ' + v.sliceCount() + ' slices (sensitivity ' + fixed(v.sensitivity) + ')');
+	}
+
+	function runSilence()
+	{
+		var v:CoverVoice = needVoice();
+		v.slice();
+		slSel = -1;
+		edited(track);
+		setStatus('Silence: ' + v.sliceCount() + ' slices (threshold ' + fixed(v.threshold) + ')');
+	}
+
+	function changeSens(d:Float)
+	{
+		var v:CoverVoice = needVoice();
+		v.sensitivity = Math.max(0.05, Math.min(1, v.sensitivity + d));
+		if (v.mode == 'transient') runTransients();
+		else { updateInfo(); dirty = true; }
+	}
+
+	function deleteSlice()
+	{
+		if (slSel < 0)
+		{
+			setStatus('Select a slice first');
+			return;
+		}
+		cur().removeSlice(slSel);
+		slSel = -1;
+		edited(track);
+	}
+
+	function mergeSlice()
+	{
+		if (slSel < 0)
+		{
+			setStatus('Select a slice first');
+			return;
+		}
+		cur().mergeNext(slSel);
+		edited(track);
+	}
+
+	function clearAllSlices()
+	{
+		cur().clearSlices();
+		slSel = -1;
+		edited(track);
+		setStatus('All slices removed (SHIFT+click on the waveform to cut new ones)');
+	}
+
+	function previewSlice(i:Int)
+	{
+		var v:CoverVoice = cur();
+		if (playing || i < 0 || i >= v.sliceCount())
+			return;
+		try
+			playBytes(v.previewSlice(i))
+		catch (e:Dynamic)
+			trace('preview: $e');
+	}
+
+	function inSlicerWave(mx:Float, my:Float):Bool
+		return mx >= X0 && mx < X1 && my >= SL_WAVE_Y && my < SL_STRIP_Y + SL_STRIP_H;
+
+	function slicerDown(mx:Float, my:Float)
+	{
+		var v:CoverVoice = cur();
+		if (v.source != '' && my >= SL_TOP && my < SL_TOP + 21 && mx >= TOOL_X && mx < TOOL_X + TOOL_W * SL_TOOLS.length)
+		{
+			switch (Std.int((mx - TOOL_X) / TOOL_W))
+			{
+				case 0: manualSlices();
+				case 1: runTransients();
+				case 2: runSilence();
+			}
+			return;
+		}
+		if (v.source != '' && inMarkerRuler(mx, my))
+		{
+			var i = rulerMarker(mx);
+			if (i >= 0)
+			{
+				slSel = i;
+				dragMx = mx;
+				drag = 'marker';
+				dirty = true;
+			}
+			else
+			{
+				var added = v.splitAt(Std.int(sx(mx)));
+				if (added >= 0) { slSel = added; edited(track); previewSlice(added); }
+			}
+			return;
+		}
+		if (v.source == '' || !inSlicerWave(mx, my))
+			return;
+		dragMx = mx;
+		dragMy = my;
+
+		// grab a slice edge?
+		var best:Int = -1;
+		var bestLeft:Bool = true;
+		var bestD:Float = 7;
+		for (i in 0...v.sliceCount())
+		{
+			var sl = v.getSlice(i);
+			var da:Float = Math.abs(xs(sl.a) - mx);
+			var db:Float = Math.abs(xs(sl.b) - mx);
+			if (da < bestD)
+			{
+				bestD = da;
+				best = i;
+				bestLeft = true;
+			}
+			if (db < bestD)
+			{
+				bestD = db;
+				best = i;
+				bestLeft = false;
+			}
+		}
+		if (best >= 0 && !FlxG.keys.pressed.SHIFT)
+		{
+			slSel = best;
+			drag = bestLeft ? 'edgeL' : 'edgeR';
+			dirty = true;
+			return;
+		}
+
+		var smp:Int = Std.int(sx(mx));
+		if (FlxG.keys.pressed.SHIFT)
+		{
+			var k:Int = v.splitAt(smp);
+			if (k >= 0)
+			{
+				slSel = k;
+				edited(track);
+				previewSlice(k);
+			}
+			return;
+		}
+		slSel = v.sliceAt(smp);
+		if (slSel >= 0)
+			previewSlice(slSel);
+		dirty = true;
+	}
+
+	function inMarkerRuler(mx:Float, my:Float):Bool
+		return mx >= X0 && mx < X1 && my >= SL_RULER_Y && my < SL_WAVE_Y;
+
+	function rulerMarker(mx:Float):Int
+	{
+		var best = -1;
+		var distance:Float = 7;
+		for (i in 0...cur().sliceCount())
+		{
+			var d = Math.abs(xs(cur().getSlice(i).a) - mx);
+			if (d < distance) { distance = d; best = i; }
+		}
+		return best;
+	}
+
+	function slicerRight(mx:Float, my:Float)
+	{
+		var v:CoverVoice = cur();
+		if (inMarkerRuler(mx, my))
+		{
+			var i = rulerMarker(mx);
+			if (i > 0) { v.mergeNext(i - 1); slSel = i - 1; edited(track); }
+			return;
+		}
+		if (v.source == '' || !inSlicerWave(mx, my))
+			return;
+		var i:Int = v.sliceAt(Std.int(sx(mx)));
+		if (i >= 0)
+		{
+			v.removeSlice(i);
+			slSel = -1;
+			edited(track);
+		}
+	}
+
+	function slicerWheel(mx:Float)
+	{
+		if (FlxG.keys.pressed.CONTROL)
+		{
+			var anchor:Float = sx(mx);
+			slSpan = slSpan * (1 - FlxG.mouse.wheel * 0.15);
+			slicerClamp();
+			slView0 = anchor - (mx - X0) / (X1 - X0) * slSpan;
+		}
+		else
+			slView0 -= FlxG.mouse.wheel * slSpan * 0.1;
+		slicerClamp();
+	}
+
+	function drawSlicer()
+	{
+		var v:CoverVoice = cur();
+		var W:Float = X1 - X0;
+		var tn:String = track == 0 ? 'Dad' : 'BF';
+		lbl(10, SL_TOP, 'SLICER - ' + tn + '   (TAB = back to piano roll)', TRACK_COLOR[track]);
+		box(X0, SL_WAVE_Y, W, SL_WAVE_H, 0xFF1A1D2B);
+		lbl(6, SL_WAVE_Y + SL_WAVE_H / 2 - 8, tn, TRACK_COLOR[track]);
+
+		if (v.source == '' || v.sampleCount() == 0)
+		{
+			lbl(X0 + 20, SL_WAVE_Y + 20, 'No audio loaded.  Use  Slicer > Load WAV...  to import a sample and slice it.', 0xFFB8C0D8);
+			return;
+		}
+
+		for (i in 0...SL_TOOLS.length)
+		{
+			var x = TOOL_X + i * TOOL_W;
+			var active = (i == 0 && v.mode == 'manual') || (i == 1 && v.mode == 'transient') || (i == 2 && v.mode == 'silence');
+			box(x, SL_TOP, TOOL_W - 3, 21, active ? 0xFF455E80 : 0xFF2B3248);
+			lbl(x + 6, SL_TOP + 2, SL_TOOLS[i]);
+		}
+		var sr:Float = v.sampleRate();
+		var n:Int = v.sliceCount();
+
+		// time ruler
+		box(X0, SL_RULER_Y, W, 20, 0xFF262A3C);
+		var pxSec:Float = W / (slSpan / sr);
+		var stepS:Float = 60;
+		for (c in [0.01, 0.02, 0.05, 0.1, 0.2, 0.5, 1, 2, 5, 10, 30, 60])
+			if (c * pxSec >= 70)
+			{
+				stepS = c;
+				break;
+			}
+		var tt:Float = Math.ceil(slView0 / sr / stepS) * stepS;
+		while (tt <= (slView0 + slSpan) / sr)
+		{
+			var tx:Float = xs(tt * sr);
+			box(tx, SL_RULER_Y + 10, 1, 10, 0xFF9AA0B8);
+			lbl(tx + 3, SL_RULER_Y + 2, fmt(tt), 0xFFFFFFFF);
+			tt += stepS;
+		}
+
+		// slice regions + key strip
+		for (i in 0...n)
+		{
+			var s = v.getSlice(i);
+			var xa:Float = xs(s.a);
+			var xb:Float = xs(s.b);
+			if (xb < X0 || xa > X1)
+				continue;
+			cbox(xa, SL_WAVE_Y, xb - xa, SL_WAVE_H, i == slSel ? 0xFF3F5F8F : (i % 2 == 0 ? 0xFF262F4A : 0xFF2E3A5C));
+			cbox(xa, SL_STRIP_Y, xb - xa - 1, SL_STRIP_H, i == slSel ? 0xFF5B7FB5 : 0xFF3A4C70);
+			cbox(xa, SL_RULER_Y + 12, 7, 7, i == slSel ? 0xFFFFE08A : 0xFFFF8A3D);
+			cbox(xa, SL_WAVE_Y, 2, SL_WAVE_H + SL_STRIP_H, 0xFFFF8A3D);
+			cbox(xb - 1, SL_WAVE_Y, 1, SL_WAVE_H, 0xFF9A6B3D);
+			if (xb - xa >= 30)
+				lbl(Math.max(xa + 4, X0 + 2), SL_STRIP_Y + 4, (xb - xa >= 64) ? noteName(v.root + i) + '  #' + i : noteName(v.root + i), 0xFFFFFFFF);
+		}
+
+		// waveform (bright inside slices, dim outside)
+		var cols:Int = Std.int(W);
+		var pk:Array<Float> = v.waveform(slView0, slSpan, cols);
+		var mid:Float = SL_WAVE_Y + SL_WAVE_H / 2;
+		var amp:Float = SL_WAVE_H / 2 - 4;
+		for (c in 0...cols)
+		{
+			var mn:Float = pk[c * 2];
+			var mx:Float = pk[c * 2 + 1];
+			if (mn == 0 && mx == 0)
+				continue;
+			var inside:Bool = v.sliceAt(Std.int(slView0 + (c + 0.5) / cols * slSpan)) >= 0;
+			var y1:Float = mid - mx * amp;
+			var y2:Float = mid - mn * amp;
+			box(X0 + c, y1, 1, Math.max(1, y2 - y1), inside ? 0xFF9BD2E8 : 0xFF4A5570);
+		}
+
+		// details
+		if (slSel >= 0 && slSel < n)
+		{
+			var s = v.getSlice(slSel);
+			lbl(10, SL_STRIP_Y + 34, 'Slice #' + slSel + ' / ' + n + '   key: ' + noteName(v.root + slSel) + ' (MIDI ' + (v.root + slSel) + ')   start ' + fixed(s.a / sr) + 's   length ' + fixed((s.b - s.a) / sr) + 's', 0xFFFFE08A);
+		}
+		else
+			lbl(10, SL_STRIP_Y + 34, 'No slice selected.  Root key: ' + noteName(v.root) + ' (MIDI ' + v.root + ')  -  slice N plays on key root + N.   ' + n + ' slices', 0xFFB8C0D8);
+		lbl(10, SL_STRIP_Y + 56, 'Detection: ' + v.mode + '   sensitivity ' + fixed(v.sensitivity) + '   threshold ' + fixed(v.threshold) + '   root ' + v.root + '   (Slicer / Voice menus)', 0xFF8890B0);
 	}
 
 	/** Da chiamare dopo ogni modifica che cambia l'audio della traccia. */
@@ -614,7 +1226,7 @@ class CoverMaker extends MusicBeatSubstate
 			setStatus('Rendering ' + (i == 0 ? 'Dad' : 'BF') + '...');
 			var buf:AudioBuffer = AudioBuffer.fromBytes(CoverVoice.wav(v.render(end)));
 			if (buf == null)
-				throw 'Decode del preview fallito';
+				throw 'Preview decode failed';
 			rendered[i] = Sound.fromAudioBuffer(buf);
 			renderDirty[i] = false;
 			renderedEnd[i] = end;
@@ -709,17 +1321,20 @@ class CoverMaker extends MusicBeatSubstate
 		if (playing || n == null || cur().source == '')
 			return;
 		try
-		{
-			var buf:AudioBuffer = AudioBuffer.fromBytes(CoverVoice.wav(cur().preview(n)));
-			if (buf == null)
-				return;
-			resetSnd(previewSnd);
-			previewSnd.loadEmbedded(Sound.fromAudioBuffer(buf));
-			previewSnd.volume = 1;
-			previewSnd.play(true);
-		}
+			playBytes(cur().preview(n))
 		catch (e:Dynamic)
 			trace('preview: $e');
+	}
+
+	function playBytes(b:Bytes)
+	{
+		var buf:AudioBuffer = AudioBuffer.fromBytes(CoverVoice.wav(b));
+		if (buf == null)
+			return;
+		resetSnd(previewSnd);
+		previewSnd.loadEmbedded(Sound.fromAudioBuffer(buf));
+		previewSnd.volume = 1;
+		previewSnd.play(true);
 	}
 
 	/** Ogni oggetto aggiunto viene disegnato solo sulla camera del Cover Maker. */
@@ -768,7 +1383,11 @@ class CoverMaker extends MusicBeatSubstate
 			togglePlay();
 		if (FlxG.keys.justPressed.ENTER)
 			stopAll();
-		if ((FlxG.keys.justPressed.DELETE || FlxG.keys.justPressed.BACKSPACE) && selected != null)
+		if (FlxG.keys.justPressed.TAB)
+			toggleSlicer();
+		if ((FlxG.keys.justPressed.DELETE || FlxG.keys.justPressed.BACKSPACE) && slicerOpen)
+			deleteSlice();
+		else if ((FlxG.keys.justPressed.DELETE || FlxG.keys.justPressed.BACKSPACE) && selected != null)
 		{
 			cur().notes.remove(selected);
 			selected = null;
@@ -784,8 +1403,9 @@ class CoverMaker extends MusicBeatSubstate
 				cursor = origin;
 			}
 			else if (cursor > page + secondsPerPage)
-				page += secondsPerPage; // gira pagina
-			dirty = true;
+				page += secondsPerPage; // turn the page
+			if (!slicerOpen)
+				dirty = true;
 		}
 
 		handleMouse();
@@ -799,8 +1419,8 @@ class CoverMaker extends MusicBeatSubstate
 
 	function handleMouse()
 	{
-		var mx:Float = FlxG.mouse.x;
-		var my:Float = FlxG.mouse.y;
+		var mx:Float = mouseX();
+		var my:Float = mouseY();
 
 		if (drag == '' && menuInput(mx, my))
 			return;
@@ -810,7 +1430,12 @@ class CoverMaker extends MusicBeatSubstate
 				return;
 		}
 
-		if (FlxG.mouse.wheel != 0 && my >= RULER_Y)
+		if (slicerOpen && FlxG.mouse.wheel != 0 && my >= RULER_Y)
+		{
+			slicerWheel(mx);
+			dirty = true;
+		}
+		else if (FlxG.mouse.wheel != 0 && my >= RULER_Y)
 		{
 			if (FlxG.keys.pressed.CONTROL)
 			{
@@ -826,9 +1451,19 @@ class CoverMaker extends MusicBeatSubstate
 		}
 
 		if (FlxG.mouse.justPressed)
-			pressDown(mx, my);
+		{
+			if (slicerOpen)
+				slicerDown(mx, my);
+			else
+				pressDown(mx, my);
+		}
 		if (FlxG.mouse.justPressedRight)
-			rightClick(mx, my);
+		{
+			if (slicerOpen)
+				slicerRight(mx, my);
+			else
+				rightClick(mx, my);
+		}
 
 		if (drag != '')
 		{
@@ -838,6 +1473,14 @@ class CoverMaker extends MusicBeatSubstate
 				endDrag();
 		}
 	}
+
+	/** Mouse position in screen space (the cover camera is fullscreen, unscrolled, zoom 1).
+		FlxG.mouse.x/y would use the chart editor's camera (scroll/zoom) and be offset. */
+	inline function mouseX():Float
+		return FlxG.mouse.screenX;
+
+	inline function mouseY():Float
+		return FlxG.mouse.screenY;
 
 	function inRoll(mx:Float, my:Float):Bool
 		return mx >= X0 && my >= ROLL_Y && my < ROLL_Y + ROWS * ROW_H;
@@ -857,7 +1500,7 @@ class CoverMaker extends MusicBeatSubstate
 	function pressDown(mx:Float, my:Float)
 	{
 		if (my < RULER_Y)
-			return; // zona bottoni
+			return; // menu bar area
 
 		dragMx = mx;
 		dragMy = my;
@@ -905,6 +1548,7 @@ class CoverMaker extends MusicBeatSubstate
 			}
 			oldValue = (drag == 'resize') ? selected.duration : selected.start;
 			oldPitch = p;
+			redrawMenu(); // SLIDE button shows the selected note
 			previewNote(selected);
 			dirty = true;
 		}
@@ -926,7 +1570,7 @@ class CoverMaker extends MusicBeatSubstate
 
 	function dragMove()
 	{
-		var d:Float = snap((FlxG.mouse.x - dragMx) / pps());
+		var d:Float = snap((mouseX() - dragMx) / pps());
 		switch (drag)
 		{
 			case 'seek':
@@ -938,12 +1582,22 @@ class CoverMaker extends MusicBeatSubstate
 			case 'pattern':
 				cur().offset = Math.max(0, oldValue + d);
 				dirty = true;
+			case 'marker':
+				if (mouseX() != dragMx && slSel >= 0 && !(slSel == 0 && cur().getSlice(0).a == 0))
+				{
+					cur().setEdge(slSel, true, Std.int(sx(mouseX())));
+					dragMx = mouseX();
+					dirty = true;
+				}
+			case 'edgeL', 'edgeR':
+				cur().setEdge(slSel, drag == 'edgeL', Std.int(sx(mouseX())));
+				dirty = true;
 			case 'resize':
 				selected.duration = Math.max(gridSec, oldValue + d);
 				dirty = true;
 			case 'new', 'move':
 				selected.start = Math.max(0, oldValue + d);
-				var np:Int = Std.int(Math.max(0, Math.min(127, oldPitch - Math.round((FlxG.mouse.y - dragMy) / ROW_H))));
+				var np:Int = Std.int(Math.max(0, Math.min(127, oldPitch - Math.round((mouseY() - dragMy) / ROW_H))));
 				if (np != selected.pitch)
 				{
 					selected.pitch = np;
@@ -1007,7 +1661,17 @@ class CoverMaker extends MusicBeatSubstate
 
 		box(0, 0, FlxG.width, FlxG.height, BG);
 
-		// ---- sfondi ----
+		if (slicerOpen)
+		{
+			drawSlicer();
+			for (i in poolIdx...pool.length)
+				pool[i].visible = false;
+			bd.unlock();
+			canvas.dirty = true;
+			return;
+		}
+
+		// ---- backgrounds ----
 		box(X0, RULER_Y, X1 - X0, 22, 0xFF262A3C);
 		cbox(X0, INST_Y, X1 - X0, 24, LANE_BG);
 		lbl(6, INST_Y + 4, 'Inst', 0xFF8CB4FF);
@@ -1020,7 +1684,7 @@ class CoverMaker extends MusicBeatSubstate
 		var cv:CoverVoice = cur();
 		var gapY:Int = INST_Y + 24 + 4;
 		box(0, gapY, FlxG.width, ROLL_Y - gapY - 2, 0xFF262A3C);
-		lbl(8, gapY + 1, 'PIANO ROLL - ' + (track == 0 ? 'Dad' : 'BF') + '   (clicca la corsia Dad o BF sopra per cambiare traccia)', TRACK_COLOR[track]);
+		lbl(8, gapY + 1, 'PIANO ROLL - ' + (track == 0 ? 'Dad' : 'BF') + '   (click the Dad or BF lane above to switch track)', TRACK_COLOR[track]);
 		var sliceEnd:Int = cv.root + cv.sliceCount();
 		for (i in 0...ROWS)
 		{
@@ -1105,9 +1769,18 @@ class CoverMaker extends MusicBeatSubstate
 			var ry:Int = ROLL_Y + (low + ROWS - 1 - n.pitch) * ROW_H;
 			var nx:Float = X0 + (cv.offset + n.start - page) * pp;
 			var nw:Float = Math.max(3, n.duration * pp);
-			cbox(nx, ry, nw, ROW_H - 1, n == selected ? 0xFFFFCA66 : TRACK_COLOR[track]);
-			if (n.slide != 0) // marcatore dello slide: dove arriva la nota alla fine
-				cbox(nx + nw - 4, ry - n.slide * ROW_H, 4, ROW_H - 1, 0xFFFF8A3D);
+			cbox(nx, ry, nw, ROW_H - 1, n == selected ? 0xFFFFCA66 : (n.slide != 0 ? 0xFFFF8A3D : TRACK_COLOR[track]));
+			if (n.slide != 0) // slide note: glide line up to the target pitch
+			{
+				var steps:Int = Std.int(Math.max(4, Math.min(80, nw / 3)));
+				for (k in 0...steps + 1)
+				{
+					var f:Float = k / steps;
+					var gy:Float = ry + ROW_H / 2 - n.slide * ROW_H * f;
+					if (gy >= ROLL_Y && gy < bottom - 2)
+						cbox(nx + f * nw, gy, 3, 2, 0xFFFFFFFF);
+				}
+			}
 		}
 
 		// ---- cursore ----
@@ -1136,9 +1809,9 @@ class CoverMaker extends MusicBeatSubstate
 				File.saveContent(p, haxe.Json.stringify({
 					song: songName,
 					inst: instPath,
-					tracks: [for (v in voices) {root: v.root, threshold: v.threshold, offset: v.offset, path: v.source, notes: v.notes, muted: v.muted}]
+					tracks: [for (v in voices) {root: v.root, threshold: v.threshold, offset: v.offset, path: v.source, notes: v.notes, muted: v.muted, sensitivity: v.sensitivity, mode: v.mode, slices: v.slicesAsArray()}]
 				}));
-				setStatus('Progetto salvato');
+				setStatus('Project saved');
 			}, SAVE);
 		else
 			pick('json', function(p)
@@ -1146,7 +1819,7 @@ class CoverMaker extends MusicBeatSubstate
 				var data:Dynamic = haxe.Json.parse(File.getContent(p));
 				var tracks:Array<Dynamic> = data.tracks;
 				if (tracks.length != 2)
-					throw 'Servono due tracce';
+					throw 'Two tracks required';
 				var vs:Array<CoverVoice> = [];
 				for (t in tracks)
 				{
@@ -1154,7 +1827,17 @@ class CoverMaker extends MusicBeatSubstate
 					v.root = t.root;
 					v.threshold = t.threshold;
 					if (t.path != '')
+					{
 						v.load(t.path);
+						if (t.sensitivity != null)
+							v.sensitivity = t.sensitivity;
+						if (t.slices != null)
+						{
+							v.setSlices(t.slices);
+							if (t.mode != null)
+								v.mode = t.mode;
+						}
+					}
 					v.offset = t.offset;
 					v.notes = t.notes;
 					v.muted = t.muted;
@@ -1169,7 +1852,7 @@ class CoverMaker extends MusicBeatSubstate
 				renderDirty = [true, true];
 				cursor = page = 0;
 				choose(0);
-				setStatus('Progetto aperto');
+				setStatus('Project opened');
 			});
 	}
 
@@ -1179,11 +1862,11 @@ class CoverMaker extends MusicBeatSubstate
 			var end:Float = totalSeconds();
 			var a:Bytes = voices[0].render(end);
 			var b:Bytes = voices[1].render(end);
-			setStatus('Export in corso...');
+			setStatus('Exporting...');
 			if (split)
 			{
-				saveWav(dir + '/Voices_Opponent.wav', a);
-				saveWav(dir + '/Voices_Player.wav', b);
+				saveWav(dir + '/Voices-Opponent.wav', a);
+				saveWav(dir + '/Voices-Player.wav', b);
 			}
 			else
 			{
@@ -1197,7 +1880,7 @@ class CoverMaker extends MusicBeatSubstate
 				}
 				saveWav(dir + '/Voices.wav', a);
 			}
-			setStatus('Esportato in ' + dir);
+			setStatus('Exported to ' + dir);
 		}, OPEN_DIRECTORY);
 
 	/** Scrive un WAV 16 bit mono 44.1 kHz. Nessun programma esterno. */
