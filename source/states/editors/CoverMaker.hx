@@ -63,8 +63,8 @@ class CoverMaker extends MusicBeatSubstate
 	static inline var SONG_W:Int = 380;
 
 	static final HINT_ROLL:String = 'SPACE play/pause | ENTER stop | TAB slicer | ESC close | DEL delete | click ruler = move cursor | drag Dad/BF lane = move pattern\n'
-		+ 'Piano roll: click = new note, drag = move, right edge = resize, right click = delete | wheel = scroll, CTRL+wheel = zoom, SHIFT+wheel = octave\n'
-		+ 'Select a note, then SLIDE (top right) turns it into a pitch glide; press it again to make it a normal note. - / + change the glide amount.';
+		+ 'Piano roll: click = new note, drag = move, right edge = resize, right click = delete | wheel = scroll, CTRL+wheel = zoom, ALT+wheel = pitch, SHIFT+wheel = octave\n'
+		+ 'CTRL+Z undo | CTRL+Y redo | CTRL+left drag = select notes | drag selection = move | DEL = delete | SLIDE = pitch glide';
 	static final HINT_SLICER:String = 'SPACE play/pause | TAB back to piano roll | DEL delete slice | click slice = select + preview | SHIFT+click = cut here | drag a slice edge = resize\n'
 		+ 'Right click = delete slice | wheel = scroll | CTRL+wheel = zoom | Ruler: click to add, drag to move, right-click a marker to merge\n'
 		+ 'Every slice is a key: slice N plays on note (root + N). Highlighted rows in the piano roll show which keys have a slice.';
@@ -81,12 +81,20 @@ class CoverMaker extends MusicBeatSubstate
 	// ---- progetto ----
 	var songName:String;
 	var projectBpm:Float;
+	var chartBpm:Float;
 	var gridSec:Float; // 1 step in secondi
 	var voices:Array<CoverVoice> = [new CoverVoice(), new CoverVoice()]; // 0 = Dad (Opponent), 1 = BF (Player)
 	var instPath:String = '';
 	var instLoaded:Bool = false;
 	var track:Int = 0;
 	var selected:CoverNote = null;
+	var group:haxe.ds.ObjectMap<CoverNote, Bool> = new haxe.ds.ObjectMap();
+	var moving:Array<{note:CoverNote, start:Float, pitch:Int}> = [];
+	var boxX:Float;
+	var boxY:Float;
+	var history:Array<{track:Int, before:String, after:String}> = [];
+	var historyPos:Int = 0;
+	var lastState:Array<String> = [];
 
 	// ---- vista ----
 	var secondsPerPage:Float = 8;
@@ -157,7 +165,13 @@ class CoverMaker extends MusicBeatSubstate
 	{
 		super();
 		songName = song;
-		projectBpm = bpm > 0 ? bpm : 120;
+		chartBpm = Math.isFinite(bpm) && bpm > 0 ? bpm : 120;
+		setTempo(chartBpm);
+	}
+
+	function setTempo(bpm:Float)
+	{
+		projectBpm = bpm;
 		gridSec = 60 / projectBpm / 4;
 	}
 
@@ -237,6 +251,7 @@ class CoverMaker extends MusicBeatSubstate
 		catch (e:Dynamic)
 			setStatus(Std.string(e));
 
+		resetHistory();
 		setStatus('Load a MIDI and a voice for Dad and BF. Use the slicer ruler or Auto buttons to place markers.');
 		updateInfo();
 		dirty = true;
@@ -334,7 +349,7 @@ class CoverMaker extends MusicBeatSubstate
 				items: [
 					it('Root -', function() changeRoot(-1), true),
 					it('Root +', function() changeRoot(1), true),
-					it('Mute track', function() { voices[track].muted = !voices[track].muted; refreshAudio(); dirty = true; }, true)
+					it('Mute track', function() { voices[track].muted = !voices[track].muted; edited(track); }, true)
 				]
 			}
 		];
@@ -684,13 +699,20 @@ class CoverMaker extends MusicBeatSubstate
 	inline function cur():CoverVoice
 		return voices[track];
 
-	function snap(t:Float):Float
-		return Math.round(t / gridSec) * gridSec;
+	// The song origin is shared by the grid and both tracks.
+	function gridTime(time:Float, minimum:Float):Float
+	{
+		var first = Math.ceil(minimum / gridSec - 1e-9);
+		return Math.max(first, Math.round(time / gridSec)) * gridSec;
+	}
+
+	inline function gridX(time:Float):Int
+		return X0 + Math.round((time - page) * pps());
 
 	function choose(i:Int)
 	{
 		track = i;
-		selected = null;
+		clearSelection();
 		slSel = -1;
 		slicerFit();
 		updateInfo();
@@ -738,7 +760,9 @@ class CoverMaker extends MusicBeatSubstate
 		var s:Sound = Sound.fromFile(p);
 		if (s == null)
 			throw 'Audio not loaded: $p';
+		var previous = instLoaded ? instPath : null;
 		setInst(s, p);
+		record(-1, previous, p);
 		setStatus('Instrumental: $p');
 	}
 
@@ -851,8 +875,8 @@ class CoverMaker extends MusicBeatSubstate
 	{
 		if (selected == null)
 			return;
-		cur().notes.remove(selected);
-		selected = null;
+		cur().notes = [for (n in cur().notes) if (n != selected && !group.exists(n)) n];
+		clearSelection();
 		edited(track);
 	}
 
@@ -932,7 +956,7 @@ class CoverMaker extends MusicBeatSubstate
 		var v:CoverVoice = needVoice();
 		v.sensitivity = Math.max(0.05, Math.min(1, v.sensitivity + d));
 		if (v.mode == 'transient') runTransients();
-		else { updateInfo(); dirty = true; }
+		else edited(track);
 	}
 
 	function deleteSlice()
@@ -1201,9 +1225,89 @@ class CoverMaker extends MusicBeatSubstate
 		lbl(10, SL_STRIP_Y + 56, 'Detection: ' + v.mode + '   sensitivity ' + fixed(v.sensitivity) + '   threshold ' + fixed(v.threshold) + '   root ' + v.root + '   (Slicer / Voice menus)', 0xFF8890B0);
 	}
 
+	function trackState(i:Int):String
+	{
+		var v = voices[i];
+		return haxe.Json.stringify({path:v.source, notes:v.notes, root:v.root, threshold:v.threshold,
+			offset:v.offset, muted:v.muted, sensitivity:v.sensitivity, mode:v.mode, slices:v.slicesAsArray()});
+	}
+
+	function resetHistory()
+	{
+		history = [];
+		historyPos = 0;
+		lastState = [trackState(0), trackState(1)];
+	}
+
+	function record(i:Int, before:String, after:String)
+	{
+		if (before == after) return;
+		history.splice(historyPos, history.length - historyPos);
+		history.push({track:i, before:before, after:after});
+		if (history.length > 64) history.shift();
+		historyPos = history.length;
+	}
+
+	function stepHistory(redo:Bool)
+	{
+		var index = redo ? historyPos : historyPos - 1;
+		if (index < 0 || index >= history.length) return;
+		var entry = history[index];
+		var state = redo ? entry.after : entry.before;
+		try
+		{
+			if (entry.track < 0)
+			{
+				if (state == null)
+				{
+					halt();
+					resetSnd(instSnd);
+					instLoaded = false;
+					instPath = '';
+				}
+				else
+				{
+					var sound = state == '' ? Paths.inst(songName) : Sound.fromFile(state);
+					if (sound == null) throw 'Instrumental unavailable';
+					setInst(sound, state);
+				}
+			}
+			else
+			{
+				var t:Dynamic = haxe.Json.parse(state);
+				var v = voices[entry.track];
+				if (v.source != t.path)
+				{
+					v = new CoverVoice();
+					if (t.path != '') v.load(t.path, true);
+				}
+				v.root = t.root;
+				v.threshold = t.threshold;
+				v.offset = t.offset;
+				v.muted = t.muted;
+				v.sensitivity = t.sensitivity;
+				v.notes = t.notes;
+				v.setSlices(t.slices);
+				v.mode = t.mode;
+				voices[entry.track] = v;
+				lastState[entry.track] = state;
+				choose(entry.track);
+			}
+			historyPos += redo ? 1 : -1;
+			renderDirty = [true, true];
+			refreshAudio();
+			dirty = true;
+			setStatus(redo ? 'Redo' : 'Undo');
+		}
+		catch (e:Dynamic) setStatus(Std.string(e));
+	}
+
 	/** Da chiamare dopo ogni modifica che cambia l'audio della traccia. */
 	function edited(i:Int)
 	{
+		var state = trackState(i);
+		record(i, lastState[i], state);
+		lastState[i] = state;
 		renderDirty[i] = true;
 		refreshAudio();
 		updateInfo();
@@ -1383,15 +1487,16 @@ class CoverMaker extends MusicBeatSubstate
 			togglePlay();
 		if (FlxG.keys.justPressed.ENTER)
 			stopAll();
-		if (FlxG.keys.justPressed.TAB)
-			toggleSlicer();
-		if ((FlxG.keys.justPressed.DELETE || FlxG.keys.justPressed.BACKSPACE) && slicerOpen)
-			deleteSlice();
-		else if ((FlxG.keys.justPressed.DELETE || FlxG.keys.justPressed.BACKSPACE) && selected != null)
+		if (drag == '')
 		{
-			cur().notes.remove(selected);
-			selected = null;
-			edited(track);
+			if (FlxG.keys.pressed.CONTROL && (FlxG.keys.justPressed.Z || FlxG.keys.justPressed.Y))
+				stepHistory(FlxG.keys.justPressed.Y);
+			else if (FlxG.keys.justPressed.TAB)
+				toggleSlicer();
+			else if (FlxG.keys.justPressed.DELETE || FlxG.keys.justPressed.BACKSPACE)
+			{
+				if (slicerOpen) deleteSlice(); else deleteNote();
+			}
 		}
 
 		if (playing)
@@ -1437,7 +1542,9 @@ class CoverMaker extends MusicBeatSubstate
 		}
 		else if (FlxG.mouse.wheel != 0 && my >= RULER_Y)
 		{
-			if (FlxG.keys.pressed.CONTROL)
+			if (FlxG.keys.pressed.ALT)
+				low = Std.int(Math.max(0, Math.min(128 - ROWS, low + FlxG.mouse.wheel)));
+			else if (FlxG.keys.pressed.CONTROL)
 			{
 				var anchor:Float = mouseTime();
 				secondsPerPage = Math.max(1, Math.min(120, secondsPerPage * (1 - FlxG.mouse.wheel * 0.12)));
@@ -1483,7 +1590,7 @@ class CoverMaker extends MusicBeatSubstate
 		return FlxG.mouse.screenY;
 
 	function inRoll(mx:Float, my:Float):Bool
-		return mx >= X0 && my >= ROLL_Y && my < ROLL_Y + ROWS * ROW_H;
+		return mx >= X0 && mx < X1 && my >= ROLL_Y && my < ROLL_Y + ROWS * ROW_H;
 
 	function noteAt(mx:Float, my:Float):CoverNote
 	{
@@ -1495,6 +1602,35 @@ class CoverMaker extends MusicBeatSubstate
 			if (n.pitch == p && t >= v.offset + n.start && t <= v.offset + n.start + n.duration)
 				found = n;
 		return found;
+	}
+
+	function clearSelection()
+	{
+		selected = null;
+		group = new haxe.ds.ObjectMap();
+		moving = [];
+	}
+
+	function updateBox()
+	{
+		boxX = Math.max(X0, Math.min(X1, mouseX()));
+		boxY = Math.max(ROLL_Y, Math.min(ROLL_Y + ROWS * ROW_H, mouseY()));
+		var left = Math.min(dragMx, boxX), right = Math.max(dragMx, boxX);
+		var top = Math.min(dragMy, boxY), bottom = Math.max(dragMy, boxY);
+		var pp = pps();
+		clearSelection();
+		for (n in cur().notes)
+		{
+			if (n.pitch < low || n.pitch >= low + ROWS) continue;
+			var x = X0 + (cur().offset + n.start - page) * pp;
+			var y = ROLL_Y + (low + ROWS - 1 - n.pitch) * ROW_H;
+			if (x <= right && x + Math.max(3, n.duration * pp) > left && y <= bottom && y + ROW_H - 1 > top)
+			{
+				group.set(n, true);
+				if (selected == null) selected = n;
+			}
+		}
+		dirty = true;
 	}
 
 	function pressDown(mx:Float, my:Float)
@@ -1527,11 +1663,19 @@ class CoverMaker extends MusicBeatSubstate
 		{
 			var v:CoverVoice = cur();
 			var p:Int = low + ROWS - 1 - Std.int((my - ROLL_Y) / ROW_H);
-			selected = noteAt(mx, my);
+			if (FlxG.keys.pressed.CONTROL)
+			{
+				drag = 'box';
+				updateBox();
+				return;
+			}
+			var hit = noteAt(mx, my);
+			if (hit == null || !group.exists(hit)) clearSelection();
+			selected = hit;
 			if (selected == null)
 			{
 				selected = {
-					start: Math.max(0, snap(t - v.offset)),
+					start: Math.max(0, gridTime(t, v.offset) - v.offset),
 					pitch: p,
 					duration: gridSec,
 					velocity: 100,
@@ -1544,7 +1688,8 @@ class CoverMaker extends MusicBeatSubstate
 			else
 			{
 				var endX:Float = X0 + (v.offset + selected.start + selected.duration - page) * pps();
-				drag = (endX - mx < 7) ? 'resize' : 'move';
+				moving = [for (n in v.notes) if (group.exists(n)) {note:n, start:n.start, pitch:n.pitch}];
+				drag = moving.length > 1 ? 'group' : ((endX - mx < 7) ? 'resize' : 'move');
 			}
 			oldValue = (drag == 'resize') ? selected.duration : selected.start;
 			oldPitch = p;
@@ -1562,15 +1707,20 @@ class CoverMaker extends MusicBeatSubstate
 		if (n != null)
 		{
 			cur().notes.remove(n);
+			group.remove(n);
 			if (selected == n)
+			{
 				selected = null;
+				for (remaining in group.keys()) { selected = remaining; break; }
+			}
 			edited(track);
 		}
 	}
 
 	function dragMove()
 	{
-		var d:Float = snap((mouseX() - dragMx) / pps());
+		var d:Float = (mouseX() - dragMx) / pps();
+		var horizontal = Math.abs(mouseX() - dragMx) >= 2;
 		switch (drag)
 		{
 			case 'seek':
@@ -1579,8 +1729,26 @@ class CoverMaker extends MusicBeatSubstate
 					cursor = Math.max(0, mouseTime());
 					dirty = true;
 				}
+			case 'box':
+				updateBox();
+			case 'group':
+				var pitchDelta = -Math.round((mouseY() - dragMy) / ROW_H);
+				var earliest = oldValue;
+				for (item in moving)
+				{
+					earliest = Math.min(earliest, item.start);
+					pitchDelta = Std.int(Math.max(-item.pitch, Math.min(127 - item.pitch, pitchDelta)));
+				}
+				var anchor = cur().offset + oldValue;
+				d = horizontal ? Math.max(-earliest, gridTime(anchor + d, anchor - earliest) - anchor) : 0;
+				for (item in moving)
+				{
+					item.note.start = item.start + d;
+					item.note.pitch = item.pitch + pitchDelta;
+				}
+				dirty = true;
 			case 'pattern':
-				cur().offset = Math.max(0, oldValue + d);
+				cur().offset = horizontal ? gridTime(oldValue + d, 0) : oldValue;
 				dirty = true;
 			case 'marker':
 				if (mouseX() != dragMx && slSel >= 0 && !(slSel == 0 && cur().getSlice(0).a == 0))
@@ -1593,10 +1761,12 @@ class CoverMaker extends MusicBeatSubstate
 				cur().setEdge(slSel, drag == 'edgeL', Std.int(sx(mouseX())));
 				dirty = true;
 			case 'resize':
-				selected.duration = Math.max(gridSec, oldValue + d);
+				var start = cur().offset + selected.start;
+				selected.duration = horizontal ? gridTime(start + oldValue + d, start + gridSec) - start : oldValue;
 				dirty = true;
 			case 'new', 'move':
-				selected.start = Math.max(0, oldValue + d);
+				var offset = cur().offset;
+				selected.start = horizontal ? Math.max(0, gridTime(offset + oldValue + d, offset) - offset) : oldValue;
 				var np:Int = Std.int(Math.max(0, Math.min(127, oldPitch - Math.round((mouseY() - dragMy) / ROW_H))));
 				if (np != selected.pitch)
 				{
@@ -1612,7 +1782,13 @@ class CoverMaker extends MusicBeatSubstate
 	{
 		var d:String = drag;
 		drag = '';
-		if (d == 'seek')
+		moving = [];
+		if (d == 'box')
+		{
+			updateBox();
+			redrawMenu();
+		}
+		else if (d == 'seek')
 			seek(mouseTime());
 		else
 			edited(track);
@@ -1715,19 +1891,19 @@ class CoverMaker extends MusicBeatSubstate
 			tt += step;
 		}
 
-		// ---- griglia dei beat ----
-		var beatSec:Float = 60 / projectBpm;
-		if (beatSec * pp >= 8)
+		// One step per sixteenth note. Skip subdivisions only when they cannot fit a pixel.
+		var stride = 1;
+		while (stride * gridSec * pp < 1) stride *= 2;
+		var tick = Math.floor(page / (gridSec * stride)) * stride;
+		var lastTick = Math.ceil((page + secondsPerPage) / gridSec);
+		while (tick <= lastTick)
 		{
-			var b:Int = Std.int(Math.floor(page / beatSec));
-			while (b * beatSec <= page + secondsPerPage)
-			{
-				var gx:Float = X0 + (b * beatSec - page) * pp;
-				var gc:Int = (b % 4 == 0) ? 0xFF4A5170 : 0xFF2F3550;
-				cbox(gx, LANE_Y[0], 1, INST_Y + 24 - LANE_Y[0], gc); // playlist
-				cbox(gx, ROLL_Y, 1, bottom - ROLL_Y, gc); // piano roll
-				b++;
-			}
+			var gx = gridX(tick * gridSec);
+			var beat = tick % 4 == 0;
+			var color = tick % 16 == 0 ? 0xFF697596 : (beat ? 0xFF505B79 : 0xFF3E4862);
+			if (beat) cbox(gx, LANE_Y[0], 1, INST_Y + 24 - LANE_Y[0], color);
+			cbox(gx, ROLL_Y, 1, bottom - ROLL_Y, color);
+			tick += stride;
 		}
 
 		// ---- instrumental ----
@@ -1767,9 +1943,10 @@ class CoverMaker extends MusicBeatSubstate
 			if (n.pitch < low || n.pitch >= low + ROWS)
 				continue;
 			var ry:Int = ROLL_Y + (low + ROWS - 1 - n.pitch) * ROW_H;
-			var nx:Float = X0 + (cv.offset + n.start - page) * pp;
-			var nw:Float = Math.max(3, n.duration * pp);
-			cbox(nx, ry, nw, ROW_H - 1, n == selected ? 0xFFFFCA66 : (n.slide != 0 ? 0xFFFF8A3D : TRACK_COLOR[track]));
+			var start = cv.offset + n.start;
+			var nx = gridX(start);
+			var nw = Math.max(1, gridX(start + n.duration) - nx);
+			cbox(nx, ry, nw, ROW_H - 1, (n == selected || group.exists(n)) ? 0xFFFFCA66 : (n.slide != 0 ? 0xFFFF8A3D : TRACK_COLOR[track]));
 			if (n.slide != 0) // slide note: glide line up to the target pitch
 			{
 				var steps:Int = Std.int(Math.max(4, Math.min(80, nw / 3)));
@@ -1781,6 +1958,16 @@ class CoverMaker extends MusicBeatSubstate
 						cbox(nx + f * nw, gy, 3, 2, 0xFFFFFFFF);
 				}
 			}
+		}
+
+		if (drag == 'box')
+		{
+			var x = Math.min(dragMx, boxX), y = Math.min(dragMy, boxY);
+			var w = Math.max(1, Math.abs(boxX - dragMx)), h = Math.max(1, Math.abs(boxY - dragMy));
+			box(x, y, w, 1, 0xFFFFCA66);
+			box(x, y + h - 1, w, 1, 0xFFFFCA66);
+			box(x, y, 1, h, 0xFFFFCA66);
+			box(x + w - 1, y, 1, h, 0xFFFFCA66);
 		}
 
 		// ---- cursore ----
@@ -1808,6 +1995,7 @@ class CoverMaker extends MusicBeatSubstate
 			{
 				File.saveContent(p, haxe.Json.stringify({
 					song: songName,
+					bpm: projectBpm,
 					inst: instPath,
 					tracks: [for (v in voices) {root: v.root, threshold: v.threshold, offset: v.offset, path: v.source, notes: v.notes, muted: v.muted, sensitivity: v.sensitivity, mode: v.mode, slices: v.slicesAsArray()}]
 				}));
@@ -1847,11 +2035,14 @@ class CoverMaker extends MusicBeatSubstate
 				halt();
 				voices = vs;
 				songName = data.song;
+				var bpm:Float = Std.parseFloat(Std.string(data.bpm));
+				setTempo(Math.isFinite(bpm) && bpm > 0 ? bpm : chartBpm);
 				setInst(snd, data.inst);
 				rendered = [null, null];
 				renderDirty = [true, true];
 				cursor = page = 0;
 				choose(0);
+				resetHistory();
 				setStatus('Project opened');
 			});
 	}
@@ -1865,8 +2056,8 @@ class CoverMaker extends MusicBeatSubstate
 			setStatus('Exporting...');
 			if (split)
 			{
-				saveWav(dir + '/Voices-Opponent.wav', a);
-				saveWav(dir + '/Voices-Player.wav', b);
+				saveWav(dir + '/Voices_Opponent.wav', a);
+				saveWav(dir + '/Voices_Player.wav', b);
 			}
 			else
 			{
