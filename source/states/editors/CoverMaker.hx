@@ -1,188 +1,974 @@
 package states.editors;
 
-import backend.Paths;
+#if sys
 import flixel.FlxG;
-import flixel.FlxSubState;
-import openfl.display.Sprite;
-import openfl.events.MouseEvent;
-import openfl.events.KeyboardEvent;
-import openfl.text.TextField;
-import openfl.text.TextFormat;
+import flixel.FlxSprite;
+import flixel.sound.FlxSound;
+import flixel.text.FlxText;
+import flixel.util.FlxColor;
 import openfl.media.Sound;
-import openfl.media.SoundChannel;
+import openfl.geom.Rectangle;
 import lime.media.AudioBuffer;
 import lime.ui.FileDialog;
 import lime.ui.FileDialogType;
 import haxe.io.Bytes;
 import sys.io.File;
 import sys.FileSystem;
+import backend.MusicBeatSubstate;
 import states.editors.CoverMidi.CoverNote;
 
-class CoverMaker extends FlxSubState {
-	var panel=new Sprite();
-	var lane=new Sprite();
-	var status=new TextField();
-	var voices=[new CoverVoice(),new CoverVoice()];
-	var selectedTrackIndex=0;
-	var inst:Sound;
-	var instPath="";
-	var song:String;
-	var bpm:Float;
-	var cursor=0.;
-	var origin=0.;
-	var playing=false;
-	var started=0.;
-	var startedAt=0.;
-	var channels:Array<SoundChannel>=[];
-	var secondsPerPage=8.;
-	var page=0.;
-	var low=48;
-	var selected:CoverNote;
-	var drag="";
-	var dx=0.;
-	var dy=0.;
-	var old=0.;
-	var oldPitch=0;
+/**
+	Cover Maker - interfaccia Flixel in stile FNF.
+	Motore audio e MIDI: CoverVoice / CoverMidi (invariati, piu' preview di nota e sliceCount).
+
+	Layout: 3 file di bottoni | righello | Inst | Dad | BF | piano roll della traccia selezionata.
+**/
+class CoverMaker extends MusicBeatSubstate
+{
+	// ---- layout (schermo 1280x720) ----
+	static inline var X0:Int = 120; // inizio timeline
+	static inline var X1:Int = 1270; // fine timeline
+	static inline var RULER_Y:Int = 150;
+	static inline var INST_Y:Int = 174;
+	static inline var LANE_H:Int = 30;
+	static inline var ROLL_Y:Int = 288;
+	static inline var ROW_H:Int = 16;
+	static inline var ROWS:Int = 24;
+	static final LANE_Y:Array<Int> = [202, 236];
+
+	// ---- colori ----
+	static inline var BG:Int = 0xFF14161F;
+	static inline var LANE_BG:Int = 0xFF2B3248;
+	static inline var LANE_BG_ON:Int = 0xFF3C4766;
+	static inline var ROW_LIGHT:Int = 0xFF323C50;
+	static inline var ROW_DARK:Int = 0xFF242C3D;
+	static inline var ROW_SLICE:Int = 0xFF3B4D63;
+	static final TRACK_COLOR:Array<Int> = [0xFFC391EF, 0xFF68D6CB];
+
+	// ---- progetto ----
+	var songName:String;
+	var projectBpm:Float;
+	var gridSec:Float; // 1 step in secondi
+	var voices:Array<CoverVoice> = [new CoverVoice(), new CoverVoice()]; // 0 = Dad (Opponent), 1 = BF (Player)
+	var instPath:String = '';
+	var instLoaded:Bool = false;
+	var track:Int = 0;
+	var selected:CoverNote = null;
+
+	// ---- vista ----
+	var secondsPerPage:Float = 8;
+	var page:Float = 0;
+	var low:Int = 48;
+	var dirty:Bool = true;
+
+	// ---- transport ----
+	var playing:Bool = false;
+	var cursor:Float = 0;
+	var origin:Float = 0;
+	var started:Float = 0;
+	var startedAt:Float = 0;
+
+	// ---- audio ----
+	var instSnd:FlxSound;
+	var voiceSnd:Array<FlxSound> = [];
+	var previewSnd:FlxSound;
+	var rendered:Array<Sound> = [null, null];
+	var renderDirty:Array<Bool> = [true, true];
+	var renderedEnd:Array<Float> = [0, 0];
+
+	// ---- mouse ----
+	var drag:String = '';
+	var dragMx:Float = 0;
+	var dragMy:Float = 0;
+	var oldValue:Float = 0;
+	var oldPitch:Int = 0;
+
+	// ---- UI ----
+	var canvas:FlxSprite;
+	var statusText:FlxText;
+	var infoText:FlxText;
+	var pool:Array<FlxText> = [];
+	var poolIdx:Int = 0;
+	var rectTmp:Rectangle = new Rectangle();
 	var dialog:FileDialog;
-	var catalog:Array<String>=[];
-	var songIndex=-1;
-	var grid:Float;
-	var stageRef:openfl.display.Stage;
-	public function new(song:String,bpm:Float) {
-		super();this.song=song;this.bpm=bpm;grid=60/Math.max(1,bpm)/4;
+	var catalog:Array<String> = [];
+	var songIndex:Int = -1;
+
+	public function new(song:String, bpm:Float)
+	{
+		super();
+		songName = song;
+		projectBpm = bpm > 0 ? bpm : 120;
+		gridSec = 60 / projectBpm / 4;
 	}
-	override public function create() {
+
+	override function create()
+	{
 		super.create();
-		stageRef=FlxG.stage;
-		stageRef.addChild(panel);
-		panel.graphics.beginFill(0x161924);panel.graphics.drawRect(0,0,1000,580);panel.graphics.endFill();
-		panel.addChild(lane);
-		status.defaultTextFormat=new TextFormat("_sans",14,0xffffff);
-		status.width=980;status.height=40;status.x=10;status.y=540;panel.addChild(status);
-		try {inst=Paths.inst(song);} catch(e:Dynamic) {info(Std.string(e));}
-		button(0,0,"Inst file",()->pick("ogg,wav",p->{var s=Sound.fromFile(p);if(s==null)throw "Audio load failed";inst=s;instPath=p;refresh();info(p);}));
-		button(1,0,"Songs >",()->{
-			if(catalog.length==0)scanSongs();
-			if(catalog.length==0)throw "No instrumental found in assets/songs or mods";
-			var p=catalog[++songIndex%catalog.length];var s=Sound.fromFile(p);if(s==null)throw "Audio load failed";
-			inst=s;instPath=p;refresh();info(p);
-		});
-		button(2,0,"Dad MIDI",()->midi(0));button(3,0,"BF MIDI",()->midi(1));
-		button(4,0,"Dad voice",()->chrom(0));button(5,0,"BF voice",()->chrom(1));
-		button(6,0,"Save",()->project(true));button(7,0,"Open",()->project(false));
-		button(0,1,"Play / Pause",()->{if(playing)halt();else {origin=cursor;play();}});
-		button(1,1,"Stop",()->{halt();cursor=origin;redrawTimeline();});
-		button(2,1,"Page <",()->{page=Math.max(0,page-secondsPerPage);redrawTimeline();});
-		button(3,1,"Page >",()->{page+=secondsPerPage;redrawTimeline();});
-		button(4,1,"Octave -",()->{low=Std.int(Math.max(0,low-12));redrawTimeline();});
-		button(5,1,"Octave +",()->{low=Std.int(Math.min(104,low+12));redrawTimeline();});
-		button(6,1,"Export stems",()->exportAudio(true));button(7,1,"Export mix",()->exportAudio(false));
-		button(0,2,"Root -",()->setting(-1));button(1,2,"Root +",()->setting(1));
-		button(2,2,"Threshold -",()->threshold(-.005));button(3,2,"Threshold +",()->threshold(.005));
-		button(4,2,"Slide -",()->slide(-1));button(5,2,"Slide +",()->slide(1));
-		button(6,2,"Mute track",()->{var v=voices[selectedTrackIndex];v.muted=!v.muted;refresh();});
-		button(7,2,"Close",()->close());
-		lane.addEventListener(MouseEvent.MOUSE_DOWN,down);
-		stageRef.addEventListener(MouseEvent.MOUSE_UP,up);
-		stageRef.addEventListener(KeyboardEvent.KEY_DOWN,key);
-		info("Select Dad/BF lane. Drag lane to move pattern. Piano roll: click to add, drag to move, drag right edge to resize, Delete to remove.");
-		redrawTimeline();layout();
-	}
-	function scanSongs() {
-		var roots=["assets/songs","mods/songs"];
-		if(FileSystem.exists("mods"))for(m in FileSystem.readDirectory("mods"))roots.push("mods/"+m+"/songs");
-		for(r in roots)if(FileSystem.exists(r)&&FileSystem.isDirectory(r))for(s in FileSystem.readDirectory(r)){
-			for (ext in ["wav", "ogg"]) {
-				var p = r + "/" + s + "/Inst." + ext;
-				if (FileSystem.exists(p)) catalog.push(p);
-			}
+		FlxG.mouse.visible = true;
+
+		canvas = new FlxSprite(0, 0).makeGraphic(FlxG.width, FlxG.height, BG, true);
+		canvas.scrollFactor.set();
+		add(canvas);
+
+		instSnd = newSound();
+		voiceSnd = [newSound(), newSound()];
+		previewSnd = newSound();
+
+		for (i in 0...44)
+		{
+			var t:FlxText = mkText(0, 0, 120, '', 12, FlxColor.WHITE);
+			t.visible = false;
+			pool.push(t);
+			add(t);
 		}
+
+		add(mkText(10, 6, 400, 'COVER MAKER', 22, 0xFFFFFFFF));
+
+		var bx:Int = 10;
+		var by:Int = 34;
+		// riga 1: sorgenti e progetto
+		btn(0, 0, 'Inst file', function() pick('ogg,wav', function(p) loadInstPath(p)));
+		btn(1, 0, 'Songs >', nextSong);
+		btn(2, 0, 'Dad MIDI', function() importMidi(0));
+		btn(3, 0, 'BF MIDI', function() importMidi(1));
+		btn(4, 0, 'Dad voice', function() importVoice(0));
+		btn(5, 0, 'BF voice', function() importVoice(1));
+		btn(6, 0, 'Save', function() project(true));
+		btn(7, 0, 'Open', function() project(false));
+		// riga 2: transport e vista
+		btn(0, 1, 'Play / Pause', togglePlay);
+		btn(1, 1, 'Stop', stopAll);
+		btn(2, 1, 'Page <', function() { page = Math.max(0, page - secondsPerPage); dirty = true; });
+		btn(3, 1, 'Page >', function() { page += secondsPerPage; dirty = true; });
+		btn(4, 1, 'Octave -', function() { low = Std.int(Math.max(0, low - 12)); dirty = true; });
+		btn(5, 1, 'Octave +', function() { low = Std.int(Math.min(104, low + 12)); dirty = true; });
+		btn(6, 1, 'Export stems', function() exportAudio(true));
+		btn(7, 1, 'Export mix', function() exportAudio(false));
+		// riga 3: voce selezionata
+		btn(0, 2, 'Root -', function() changeRoot(-1));
+		btn(1, 2, 'Root +', function() changeRoot(1));
+		btn(2, 2, 'Threshold -', function() changeThreshold(-0.005));
+		btn(3, 2, 'Threshold +', function() changeThreshold(0.005));
+		btn(4, 2, 'Slide -', function() changeSlide(-1));
+		btn(5, 2, 'Slide +', function() changeSlide(1));
+		btn(6, 2, 'Mute track', function() { voices[track].muted = !voices[track].muted; refreshAudio(); dirty = true; });
+		btn(7, 2, 'Close', closeCover);
+
+		statusText = mkText(10, 108, FlxG.width - 20, '', 14, 0xFFFFE08A);
+		add(statusText);
+		infoText = mkText(10, 126, FlxG.width - 20, '', 13, 0xFFB8C0D8);
+		add(infoText);
+
+		var hint:FlxText = mkText(10, ROLL_Y + ROWS * ROW_H + 6, FlxG.width - 20,
+			'SPACE play/pausa | ENTER stop | ESC chiudi | DEL cancella nota | click righello = sposta cursore | trascina corsia Dad/BF = sposta pattern\n'
+			+ 'Piano roll: click = nuova nota, trascina = sposta, bordo destro = allunga, click destro = elimina | rotella = scorri, CTRL+rotella = zoom, SHIFT+rotella = ottava',
+			12, 0xFF7F88A8);
+		hint.wordWrap = true;
+		add(hint);
+
+		try
+		{
+			var s:Sound = Paths.inst(songName);
+			if (s != null)
+				setInst(s, '');
+		}
+		catch (e:Dynamic)
+			setStatus(Std.string(e));
+
+		setStatus('Carica un MIDI e una voce per Dad e BF. La voce viene tagliata nei silenzi: la nota root + N suona la fetta N.');
+		updateInfo();
+		dirty = true;
+	}
+
+	// ------------------------------------------------------------------
+	// helper UI
+	// ------------------------------------------------------------------
+	function mkText(x:Float, y:Float, w:Float, txt:String, size:Int, color:FlxColor):FlxText
+	{
+		var t:FlxText = new FlxText(x, y, w, txt, size);
+		t.setFormat(Paths.font('vcr.ttf'), size, color, LEFT, OUTLINE_FAST, FlxColor.BLACK);
+		t.borderSize = 1;
+		t.scrollFactor.set();
+		return t;
+	}
+
+	function btn(col:Int, row:Int, label:String, fn:Void->Void)
+	{
+		var b:PsychUIButton = new PsychUIButton(10 + col * 122, 34 + row * 26, label, function()
+		{
+			try
+				fn()
+			catch (e:Dynamic)
+				setStatus(Std.string(e));
+		}, 116);
+		add(b);
+	}
+
+	function newSound():FlxSound
+	{
+		var s:FlxSound = new FlxSound();
+		s.autoDestroy = false;
+		FlxG.sound.list.add(s);
+		return s;
+	}
+
+	function resetSnd(s:FlxSound)
+	{
+		s.stop();
+		@:privateAccess s.cleanup(true);
+	}
+
+	inline function setStatus(s:String)
+		statusText.text = s;
+
+	function updateInfo()
+	{
+		var v:CoverVoice = voices[track];
+		infoText.text = 'Traccia: ${track == 0 ? "Dad" : "BF"}${v.muted ? " [MUTE]" : ""}   voce: ${v.source == "" ? "(nessuna)" : v.source}   '
+			+ 'fette: ${v.sliceCount()}   root: ${v.root}   soglia: ${Math.round(v.threshold * 1000) / 1000}   note: ${v.notes.length}   '
+			+ 'BPM: ${Math.round(projectBpm * 100) / 100}';
+	}
+
+	function fmt(t:Float):String
+	{
+		var m:Int = Std.int(t / 60);
+		var s:Float = t - m * 60;
+		return m + ':' + (s < 10 ? '0' : '') + Std.string(Math.round(s * 100) / 100);
+	}
+
+	inline function pps():Float
+		return (X1 - X0) / secondsPerPage;
+
+	inline function mouseTime():Float
+		return page + (FlxG.mouse.x - X0) / pps();
+
+	inline function cur():CoverVoice
+		return voices[track];
+
+	function snap(t:Float):Float
+		return Math.round(t / gridSec) * gridSec;
+
+	function choose(i:Int)
+	{
+		track = i;
+		selected = null;
+		updateInfo();
+		dirty = true;
+	}
+
+	function totalSeconds():Float
+	{
+		var end:Float = instLoaded ? instSnd.length / 1000 : 0;
+		for (v in voices)
+			for (n in v.notes)
+				end = Math.max(end, v.offset + n.start + n.duration);
+		return Math.max(0.1, end);
+	}
+
+	// ------------------------------------------------------------------
+	// sorgenti
+	// ------------------------------------------------------------------
+	function pick(filter:String, fn:String->Void, mode:FileDialogType = OPEN)
+	{
+		dialog = new FileDialog();
+		dialog.onSelect.add(function(p:String)
+		{
+			try
+				fn(p)
+			catch (e:Dynamic)
+				setStatus(Std.string(e));
+		});
+		dialog.browse(mode, filter);
+	}
+
+	function setInst(s:Sound, path:String)
+	{
+		halt();
+		resetSnd(instSnd);
+		instSnd.loadEmbedded(s);
+		instLoaded = true;
+		instPath = path;
+		renderDirty = [true, true];
+		dirty = true;
+	}
+
+	function loadInstPath(p:String)
+	{
+		var s:Sound = Sound.fromFile(p);
+		if (s == null)
+			throw 'Audio non caricato: $p';
+		setInst(s, p);
+		setStatus('Instrumental: $p');
+	}
+
+	function scanSongs()
+	{
+		var roots:Array<String> = ['assets/songs', 'mods/songs'];
+		if (FileSystem.exists('mods'))
+			for (m in FileSystem.readDirectory('mods'))
+				roots.push('mods/' + m + '/songs');
+		for (r in roots)
+			if (FileSystem.exists(r) && FileSystem.isDirectory(r))
+				for (s in FileSystem.readDirectory(r))
+					for (ext in ['ogg', 'wav'])
+					{
+						var p:String = r + '/' + s + '/Inst.' + ext;
+						if (FileSystem.exists(p))
+							catalog.push(p);
+					}
 		catalog.sort(Reflect.compare);
 	}
-	function info(s:String)status.text=s;
-	function button(col:Int,row:Int,title:String,fn:Void->Void){
-		var b=new Sprite();b.x=6+col*124;b.y=5+row*32;b.graphics.beginFill(0x36445e);b.graphics.drawRoundRect(0,0,118,28,6);b.graphics.endFill();
-		var t=new TextField();t.defaultTextFormat=new TextFormat("_sans",14,0xffffff);t.text=title;t.x=5;t.y=3;t.width=113;t.height=23;t.mouseEnabled=false;b.addChild(t);
-		panel.addChild(b);b.buttonMode=true;b.addEventListener(MouseEvent.CLICK,(_)->{try fn() catch(e:Dynamic)info(Std.string(e));});
+
+	function nextSong()
+	{
+		if (catalog.length == 0)
+			scanSongs();
+		if (catalog.length == 0)
+			throw 'Nessun Inst trovato in assets/songs o mods';
+		songIndex = (songIndex + 1) % catalog.length;
+		loadInstPath(catalog[songIndex]);
 	}
-	function pick(filter:String,fn:String->Void,mode:FileDialogType=OPEN){
-		dialog=new FileDialog();dialog.onSelect.add(p->{try fn(p) catch(e:Dynamic)info(Std.string(e));});dialog.browse(mode,filter);
+
+	function importMidi(i:Int)
+		pick('mid,midi', function(p)
+		{
+			var ns:Array<CoverNote> = CoverMidi.read(File.getBytes(p));
+			choose(i);
+			voices[i].notes = ns;
+			if (ns.length > 0)
+				low = Std.int(Math.min(104, Math.max(0, ns[0].pitch - 8)));
+			edited(i);
+			setStatus(ns.length + ' note importate per ' + (i == 0 ? 'Dad' : 'BF'));
+		});
+
+	function importVoice(i:Int)
+		pick('wav,ogg', function(p)
+		{
+			voices[i].load(p);
+			choose(i);
+			edited(i);
+			setStatus('Voce ' + (i == 0 ? 'Dad' : 'BF') + ': ' + p + ' (' + voices[i].sliceCount() + ' fette)');
+		});
+
+	function changeRoot(d:Int)
+	{
+		var v:CoverVoice = cur();
+		v.root = Std.int(Math.max(0, Math.min(127, v.root + d)));
+		edited(track);
 	}
-	function choose(i:Int){selectedTrackIndex=i;selected=null;}
-	function midi(i:Int)pick("mid,midi",p->{var ns=CoverMidi.read(File.getBytes(p));choose(i);voices[i].notes=ns;if(ns.length>0)low=Std.int(Math.min(104,Math.max(0,ns[0].pitch-8)));refresh();info(ns.length+" notes");});
-	function chrom(i:Int)pick("wav,ogg",p->{voices[i].load(p);choose(i);refresh();info(p);});
-	function setting(d:Int){var v=voices[selectedTrackIndex];v.root=Std.int(Math.max(0,Math.min(127,v.root+d)));refresh();info("First slice MIDI pitch "+v.root);}
-	function threshold(d:Float){var v=voices[selectedTrackIndex];v.threshold=Math.max(.001,Math.min(.95,v.threshold+d));v.slice();refresh();info("Slice threshold "+v.threshold);}
-	function slide(d:Int){if(selected!=null){selected.slide+=d;refresh();info("Slide "+selected.slide+" semitones over note");}}
-	function layout(){panel.scaleX=stageRef.stageWidth/1000.;panel.scaleY=stageRef.stageHeight/580.;}
-	function arrangementDuration(){var end=inst==null?0.:inst.length/1000.;for(v in voices)for(n in v.notes)end=Math.max(end,v.offset+n.start+n.duration);return Math.max(.1,end);}
-	function halt(){if(playing)cursor=startedAt+haxe.Timer.stamp()-started;playing=false;for(c in channels)if(c!=null)c.stop();channels=[];}
-	function play(){
-		halt();var end=arrangementDuration();if(cursor>=end)cursor=0;
-		var sounds:Array<Sound>=[];
-		for(v in voices)if(!v.muted && v.source!="" && v.notes.length>0){
-			var buf=AudioBuffer.fromBytes(CoverVoice.wav(v.render(end)));if(buf==null)throw "Preview decode failed";sounds.push(Sound.fromAudioBuffer(buf));
+
+	function changeThreshold(d:Float)
+	{
+		var v:CoverVoice = cur();
+		v.threshold = Math.max(0.001, Math.min(0.95, v.threshold + d));
+		v.slice();
+		edited(track);
+	}
+
+	function changeSlide(d:Int)
+	{
+		if (selected == null)
+			return;
+		selected.slide += d;
+		edited(track);
+		setStatus('Slide ' + selected.slide + ' semitoni sulla nota');
+	}
+
+	/** Da chiamare dopo ogni modifica che cambia l'audio della traccia. */
+	function edited(i:Int)
+	{
+		renderDirty[i] = true;
+		refreshAudio();
+		updateInfo();
+		dirty = true;
+	}
+
+	// ------------------------------------------------------------------
+	// transport (il cursore segue il tempo dell'audio dell'Inst)
+	// ------------------------------------------------------------------
+	function currentTime():Float
+		return (instLoaded && instSnd.playing) ? instSnd.time / 1000 : startedAt + (haxe.Timer.stamp() - started);
+
+	function getRendered(i:Int, end:Float):Sound
+	{
+		var v:CoverVoice = voices[i];
+		if (v.muted || v.source == '' || v.notes.length == 0)
+			return null;
+		if (rendered[i] == null || renderDirty[i] || renderedEnd[i] < end)
+		{
+			setStatus('Rendering ' + (i == 0 ? 'Dad' : 'BF') + '...');
+			var buf:AudioBuffer = AudioBuffer.fromBytes(CoverVoice.wav(v.render(end)));
+			if (buf == null)
+				throw 'Decode del preview fallito';
+			rendered[i] = Sound.fromAudioBuffer(buf);
+			renderDirty[i] = false;
+			renderedEnd[i] = end;
+			setStatus('');
 		}
-		if(inst!=null)sounds.push(inst);
-		for(s in sounds)if(cursor*1000<s.length)channels.push(s.play(cursor*1000));
-		startedAt=cursor;started=haxe.Timer.stamp();playing=true;
+		return rendered[i];
 	}
-	function refresh(){if(playing){halt();play();}redrawTimeline();}
-	function rect(x:Float,y:Float,w:Float,h:Float,color:Int){if(w<=0)return;var g=lane.graphics;g.beginFill(color);g.drawRect(x,y,w,h);g.endFill();}
-	function label(x:Int,y:Int,s:String){var t=new TextField();t.defaultTextFormat=new TextFormat("_sans",13,0xffffff);t.text=s;t.width=95;t.height=24;t.x=x;t.y=y;t.mouseEnabled=false;lane.addChild(t);}
-	function xx(t:Float)return 100+(t-page)*900/secondsPerPage;
-	function redrawTimeline(){
-		lane.graphics.clear();while(lane.numChildren>0)lane.removeChildAt(0);
-		rect(0,104,1000,430,0x202635);label(4,108,"Time");label(4,137,"Inst");
-		rect(100,136,Math.min(900,Math.max(0,xx(inst==null?0.:inst.length/1000.)-100)),22,0x467b86);
-		for(i in 0...2){var y=164+i*28;var v=voices[i];label(4,y,(i==0?"Dad":"BF")+(v.muted?" [mute]":""));rect(100,y,900,25,selectedTrackIndex==i?0x45516a:0x30394c);
-			for(n in v.notes){var x=xx(n.start+v.offset);var right=xx(n.start+v.offset+n.duration);rect(Math.max(100,x),y+8,Math.min(1000,right)-Math.max(100,x),8,i==0?0xc391ef:0x68d6cb);}
+
+	function play()
+	{
+		halt();
+		var end:Float = totalSeconds();
+		if (cursor >= end)
+			cursor = 0;
+
+		for (i in 0...2)
+		{
+			var s:Sound = getRendered(i, end);
+			if (s == null)
+				continue;
+			resetSnd(voiceSnd[i]);
+			voiceSnd[i].loadEmbedded(s);
+			voiceSnd[i].volume = 1;
+			if (cursor * 1000 < voiceSnd[i].length)
+				voiceSnd[i].play(true, cursor * 1000);
 		}
-		for(i in 0...24){var y=224+i*12;var p=low+23-i;rect(100,y,900,11,[1,3,6,8,10].indexOf(p%12)>=0?0x242c3d:0x323c50);if(p%12==0)label(5,y-3,"MIDI "+p);}
-		for(i in 0...9){var x=100+i*112.5;rect(x,108,1,404,0x506078);if(i<8)label(Std.int(x)+2,106,Std.string(page+i)+"s");}
-		var v=voices[selectedTrackIndex];
-		for(n in v.notes)if(n.pitch>=low && n.pitch<low+24){var x=xx(v.offset+n.start),r=xx(v.offset+n.start+n.duration);rect(Math.max(100,x),224+(low+23-n.pitch)*12,Math.min(1000,r)-Math.max(100,x),11,n==selected?0xffca66:0x65bbac);}
-		var x=xx(cursor);if(x>=100&&x<=1000)rect(x,108,2,404,0xffffff);
-	}
-	function snap(t:Float)return Math.round(t/grid)*grid;
-	function down(e:MouseEvent){
-		var x=panel.mouseX,y=panel.mouseY,t=page+(x-100)*secondsPerPage/900;dx=x;dy=y;
-		if(y<136 && x>=100){var resume=playing;halt();cursor=Math.max(0,t);origin=cursor;if(resume)play();}
-		else if(y>=164 && y<220){choose(y<192?0:1);drag="pattern";old=voices[selectedTrackIndex].offset;}
-		else if(y>=224&&y<512&&x>=100){
-			var v=voices[selectedTrackIndex],p=low+23-Std.int((y-224)/12);selected=null;
-			for(n in v.notes)if(n.pitch==p && t>=v.offset+n.start && t<=v.offset+n.start+n.duration)selected=n;
-			if(selected==null){selected={start:Math.max(0,snap(t-v.offset)),pitch:p,duration:grid,velocity:100,channel:0,slide:0};v.notes.push(selected);drag="new";}
-			else {drag=xx(v.offset+selected.start+selected.duration)-x<7?"resize":"move";}
-			old=drag=="resize"?selected.duration:selected.start;oldPitch=p;
+		if (instLoaded && cursor * 1000 < instSnd.length)
+		{
+			instSnd.volume = 1;
+			instSnd.play(true, cursor * 1000);
 		}
-		redrawTimeline();
+		startedAt = cursor;
+		started = haxe.Timer.stamp();
+		playing = true;
 	}
-	function move(){var d=snap((panel.mouseX-dx)*secondsPerPage/900);
-		switch(drag){
-			case "pattern":voices[selectedTrackIndex].offset=Math.max(0,old+d);
-			case "resize":selected.duration=Math.max(grid,old+d);
-			case "new","move":selected.start=Math.max(0,old+d);selected.pitch=Std.int(Math.max(0,Math.min(127,oldPitch-Math.round((panel.mouseY-dy)/12))));
+
+	function halt()
+	{
+		if (playing)
+			cursor = currentTime();
+		playing = false;
+		instSnd.pause();
+		for (s in voiceSnd)
+			s.pause();
+	}
+
+	function togglePlay()
+	{
+		if (playing)
+			halt();
+		else
+		{
+			origin = cursor;
+			play();
+		}
+		dirty = true;
+	}
+
+	function stopAll()
+	{
+		halt();
+		instSnd.stop();
+		for (s in voiceSnd)
+			s.stop();
+		cursor = origin;
+		dirty = true;
+	}
+
+	function refreshAudio()
+	{
+		if (playing)
+		{
+			halt();
+			play();
+		}
+	}
+
+	function seek(t:Float)
+	{
+		var resume:Bool = playing;
+		halt();
+		cursor = Math.max(0, t);
+		origin = cursor;
+		if (resume)
+			play();
+		dirty = true;
+	}
+
+	/** Anteprima di una singola nota mentre la modifichi. */
+	function previewNote(n:CoverNote)
+	{
+		if (playing || n == null || cur().source == '')
+			return;
+		try
+		{
+			var buf:AudioBuffer = AudioBuffer.fromBytes(CoverVoice.wav(cur().preview(n)));
+			if (buf == null)
+				return;
+			resetSnd(previewSnd);
+			previewSnd.loadEmbedded(Sound.fromAudioBuffer(buf));
+			previewSnd.volume = 1;
+			previewSnd.play(true);
+		}
+		catch (e:Dynamic)
+			trace('preview: $e');
+	}
+
+	function closeCover()
+	{
+		halt();
+		close();
+	}
+
+	// ------------------------------------------------------------------
+	// input
+	// ------------------------------------------------------------------
+	override function update(elapsed:Float)
+	{
+		super.update(elapsed);
+
+		if (FlxG.keys.justPressed.ESCAPE)
+		{
+			closeCover();
+			return;
+		}
+		if (FlxG.keys.justPressed.SPACE)
+			togglePlay();
+		if (FlxG.keys.justPressed.ENTER)
+			stopAll();
+		if ((FlxG.keys.justPressed.DELETE || FlxG.keys.justPressed.BACKSPACE) && selected != null)
+		{
+			cur().notes.remove(selected);
+			selected = null;
+			edited(track);
+		}
+
+		if (playing)
+		{
+			cursor = currentTime();
+			if (cursor >= totalSeconds())
+			{
+				halt();
+				cursor = origin;
+			}
+			else if (cursor > page + secondsPerPage)
+				page += secondsPerPage; // gira pagina
+			dirty = true;
+		}
+
+		handleMouse();
+
+		if (dirty)
+		{
+			redraw();
+			dirty = false;
+		}
+	}
+
+	function handleMouse()
+	{
+		var mx:Float = FlxG.mouse.x;
+		var my:Float = FlxG.mouse.y;
+
+		if (FlxG.mouse.wheel != 0 && my >= RULER_Y)
+		{
+			if (FlxG.keys.pressed.CONTROL)
+			{
+				var anchor:Float = mouseTime();
+				secondsPerPage = Math.max(1, Math.min(120, secondsPerPage * (1 - FlxG.mouse.wheel * 0.12)));
+				page = Math.max(0, anchor - (mx - X0) / pps());
+			}
+			else if (FlxG.keys.pressed.SHIFT)
+				low = Std.int(Math.max(0, Math.min(104, low + FlxG.mouse.wheel * 12)));
+			else
+				page = Math.max(0, page - FlxG.mouse.wheel * secondsPerPage * 0.1);
+			dirty = true;
+		}
+
+		if (FlxG.mouse.justPressed)
+			pressDown(mx, my);
+		if (FlxG.mouse.justPressedRight)
+			rightClick(mx, my);
+
+		if (drag != '')
+		{
+			if (FlxG.mouse.pressed)
+				dragMove();
+			else
+				endDrag();
+		}
+	}
+
+	function inRoll(mx:Float, my:Float):Bool
+		return mx >= X0 && my >= ROLL_Y && my < ROLL_Y + ROWS * ROW_H;
+
+	function noteAt(mx:Float, my:Float):CoverNote
+	{
+		var v:CoverVoice = cur();
+		var t:Float = page + (mx - X0) / pps();
+		var p:Int = low + ROWS - 1 - Std.int((my - ROLL_Y) / ROW_H);
+		var found:CoverNote = null;
+		for (n in v.notes)
+			if (n.pitch == p && t >= v.offset + n.start && t <= v.offset + n.start + n.duration)
+				found = n;
+		return found;
+	}
+
+	function pressDown(mx:Float, my:Float)
+	{
+		if (my < RULER_Y)
+			return; // zona bottoni
+
+		dragMx = mx;
+		dragMy = my;
+		var t:Float = page + (mx - X0) / pps();
+
+		if (my < INST_Y)
+		{
+			if (mx >= X0)
+			{
+				seek(t);
+				drag = 'seek';
+			}
+		}
+		else if (my >= LANE_Y[0] && my < LANE_Y[1] + LANE_H)
+		{
+			choose(my < LANE_Y[1] - 2 ? 0 : 1);
+			if (mx >= X0)
+			{
+				drag = 'pattern';
+				oldValue = cur().offset;
+			}
+		}
+		else if (inRoll(mx, my))
+		{
+			var v:CoverVoice = cur();
+			var p:Int = low + ROWS - 1 - Std.int((my - ROLL_Y) / ROW_H);
+			selected = noteAt(mx, my);
+			if (selected == null)
+			{
+				selected = {
+					start: Math.max(0, snap(t - v.offset)),
+					pitch: p,
+					duration: gridSec,
+					velocity: 100,
+					channel: 0,
+					slide: 0
+				};
+				v.notes.push(selected);
+				drag = 'new';
+			}
+			else
+			{
+				var endX:Float = X0 + (v.offset + selected.start + selected.duration - page) * pps();
+				drag = (endX - mx < 7) ? 'resize' : 'move';
+			}
+			oldValue = (drag == 'resize') ? selected.duration : selected.start;
+			oldPitch = p;
+			previewNote(selected);
+			dirty = true;
+		}
+	}
+
+	function rightClick(mx:Float, my:Float)
+	{
+		if (!inRoll(mx, my))
+			return;
+		var n:CoverNote = noteAt(mx, my);
+		if (n != null)
+		{
+			cur().notes.remove(n);
+			if (selected == n)
+				selected = null;
+			edited(track);
+		}
+	}
+
+	function dragMove()
+	{
+		var d:Float = snap((FlxG.mouse.x - dragMx) / pps());
+		switch (drag)
+		{
+			case 'seek':
+				if (!playing)
+				{
+					cursor = Math.max(0, mouseTime());
+					dirty = true;
+				}
+			case 'pattern':
+				cur().offset = Math.max(0, oldValue + d);
+				dirty = true;
+			case 'resize':
+				selected.duration = Math.max(gridSec, oldValue + d);
+				dirty = true;
+			case 'new', 'move':
+				selected.start = Math.max(0, oldValue + d);
+				var np:Int = Std.int(Math.max(0, Math.min(127, oldPitch - Math.round((FlxG.mouse.y - dragMy) / ROW_H))));
+				if (np != selected.pitch)
+				{
+					selected.pitch = np;
+					previewNote(selected);
+				}
+				dirty = true;
 			default:
 		}
 	}
-	function up(e:MouseEvent){if(drag!=""){move();drag="";refresh();}}
-	function key(e:KeyboardEvent){try {if(e.keyCode==46&&selected!=null){voices[selectedTrackIndex].notes.remove(selected);selected=null;drag="";refresh();}if(e.keyCode==32){if(playing)halt();else play();}}catch(err:Dynamic)info(Std.string(err));}
-	override public function update(elapsed:Float){super.update(elapsed);layout();if(drag!="")move();if(playing){cursor=startedAt+haxe.Timer.stamp()-started;if(cursor>=arrangementDuration())halt();}if(playing||drag!="")redrawTimeline();}
-	function project(save:Bool){
-		if(save)pick("json",p->{File.saveContent(p,haxe.Json.stringify({song:song,inst:instPath,tracks:[for(v in voices){root:v.root,threshold:v.threshold,offset:v.offset,path:v.source,notes:v.notes,muted:v.muted}]}));info("Project saved");},SAVE);
-		else pick("json",p->{var data:Dynamic=haxe.Json.parse(File.getContent(p));var vs=[];var tracks:Array<Dynamic>=data.tracks;if(tracks.length!=2)throw "Expected two tracks";
-			for(t in tracks){var v=new CoverVoice();v.root=t.root;v.threshold=t.threshold;if(t.path!="")v.load(t.path);v.offset=t.offset;v.notes=t.notes;v.muted=t.muted;vs.push(v);}
-			var sound=data.inst==""?Paths.inst(data.song):Sound.fromFile(data.inst);halt();voices=vs;inst=sound;song=data.song;instPath=data.inst;cursor=page=0;choose(0);redrawTimeline();info("Project opened");});
+
+	function endDrag()
+	{
+		var d:String = drag;
+		drag = '';
+		if (d == 'seek')
+			seek(mouseTime());
+		else
+			edited(track);
 	}
-	function exportAudio(split:Bool)pick("",dir->{
-		var end=arrangementDuration(),a=voices[0].render(end),b=voices[1].render(end);
-		if(split){writeWav(dir+"/Voices-Opponent.wav",a);writeWav(dir+"/Voices-Player.wav",b);}
-		else {for(i in 0...Std.int(a.length/2)){var j=i*2,x=a.getUInt16(j),y=b.getUInt16(j);var sum=(x>=32768?x-65536:x)+(y>=32768?y-65536:y);a.setUInt16(j,Std.int(Math.max(-32768,Math.min(32767,sum)))&65535);}writeWav(dir+"/Voices.wav",a);}
-		info("Exported to "+dir);
-	},OPEN_DIRECTORY);
-	function writeWav(path:String, pcm:Bytes){
-		File.saveBytes(path, CoverVoice.wav(pcm));
+
+	// ------------------------------------------------------------------
+	// disegno: un solo bitmap, ridisegnato solo quando serve
+	// ------------------------------------------------------------------
+	function box(x:Float, y:Float, w:Float, h:Float, c:Int)
+	{
+		if (w <= 0 || h <= 0)
+			return;
+		rectTmp.setTo(x, y, w, h);
+		canvas.pixels.fillRect(rectTmp, c);
 	}
-	override public function destroy(){halt();if(stageRef!=null){stageRef.removeEventListener(MouseEvent.MOUSE_UP,up);stageRef.removeEventListener(KeyboardEvent.KEY_DOWN,key);}if(panel.parent!=null)panel.parent.removeChild(panel);super.destroy();}
+
+	/** Come box(), ma tagliato sull'area della timeline. */
+	function cbox(x:Float, y:Float, w:Float, h:Float, c:Int)
+	{
+		var a:Float = Math.max(x, X0);
+		var b:Float = Math.min(x + w, X1);
+		if (b > a)
+			box(a, y, b - a, h, c);
+	}
+
+	function lbl(x:Float, y:Float, s:String, color:Int = 0xFFFFFFFF)
+	{
+		if (poolIdx >= pool.length)
+			return;
+		var t:FlxText = pool[poolIdx++];
+		t.x = x;
+		t.y = y;
+		if (t.text != s)
+			t.text = s;
+		t.color = color;
+		t.visible = true;
+	}
+
+	function redraw()
+	{
+		var bd = canvas.pixels;
+		bd.lock();
+		poolIdx = 0;
+		var pp:Float = pps();
+		var bottom:Int = ROLL_Y + ROWS * ROW_H;
+
+		box(0, 0, FlxG.width, FlxG.height, BG);
+
+		// ---- sfondi ----
+		box(X0, RULER_Y, X1 - X0, 22, 0xFF262A3C);
+		cbox(X0, INST_Y, X1 - X0, 24, LANE_BG);
+		lbl(6, INST_Y + 4, 'Inst', 0xFF8CB4FF);
+		for (i in 0...2)
+		{
+			cbox(X0, LANE_Y[i], X1 - X0, LANE_H, track == i ? LANE_BG_ON : LANE_BG);
+			lbl(6, LANE_Y[i] + 7, (i == 0 ? 'Dad' : 'BF') + (voices[i].muted ? ' [M]' : ''), TRACK_COLOR[i]);
+		}
+
+		var cv:CoverVoice = cur();
+		var gapY:Int = LANE_Y[1] + LANE_H + 4;
+		box(0, gapY, FlxG.width, ROLL_Y - gapY - 2, 0xFF262A3C);
+		lbl(8, gapY + 1, 'PIANO ROLL - ' + (track == 0 ? 'Dad' : 'BF') + '   (clicca la corsia Dad o BF sopra per cambiare traccia)', TRACK_COLOR[track]);
+		var sliceEnd:Int = cv.root + cv.sliceCount();
+		for (i in 0...ROWS)
+		{
+			var p:Int = low + ROWS - 1 - i;
+			var y:Int = ROLL_Y + i * ROW_H;
+			var black:Bool = [1, 3, 6, 8, 10].indexOf(p % 12) >= 0;
+			var inSlice:Bool = p >= cv.root && p < sliceEnd;
+			cbox(X0, y, X1 - X0, ROW_H - 1, inSlice ? ROW_SLICE : (black ? ROW_DARK : ROW_LIGHT));
+			box(0, y, X0 - 6, ROW_H - 1, black ? 0xFF15171E : 0xFFDDE1EC);
+			if (p % 12 == 0)
+				lbl(4, y, 'C' + Std.int(p / 12), 0xFF111111);
+		}
+
+		// ---- righello ----
+		var step:Float = 60;
+		for (c in [0.25, 0.5, 1, 2, 5, 10, 15, 30, 60])
+			if (c * pp >= 70)
+			{
+				step = c;
+				break;
+			}
+		var tt:Float = Math.ceil(page / step) * step;
+		while (tt <= page + secondsPerPage)
+		{
+			var x:Float = X0 + (tt - page) * pp;
+			box(x, RULER_Y + 10, 1, 12, 0xFF9AA0B8);
+			lbl(x + 3, RULER_Y + 2, fmt(tt), 0xFFFFFFFF);
+			tt += step;
+		}
+
+		// ---- griglia dei beat ----
+		var beatSec:Float = 60 / projectBpm;
+		if (beatSec * pp >= 8)
+		{
+			var b:Int = Std.int(Math.floor(page / beatSec));
+			while (b * beatSec <= page + secondsPerPage)
+			{
+				var gx:Float = X0 + (b * beatSec - page) * pp;
+				var gc:Int = (b % 4 == 0) ? 0xFF4A5170 : 0xFF2F3550;
+				cbox(gx, INST_Y, 1, LANE_Y[1] + LANE_H - INST_Y, gc); // playlist
+				cbox(gx, ROLL_Y, 1, bottom - ROLL_Y, gc); // piano roll
+				b++;
+			}
+		}
+
+		// ---- instrumental ----
+		if (instLoaded)
+			cbox(X0 + (0 - page) * pp, INST_Y + 5, instSnd.length / 1000 * pp, 14, 0xFF467B86);
+
+		// ---- note nelle corsie Dad / BF ----
+		for (i in 0...2)
+		{
+			var v:CoverVoice = voices[i];
+			if (v.notes.length == 0)
+				continue;
+			var lo:Int = 127;
+			var hi:Int = 0;
+			var first:Float = 1e9;
+			var last:Float = 0;
+			for (n in v.notes)
+			{
+				lo = Std.int(Math.min(lo, n.pitch));
+				hi = Std.int(Math.max(hi, n.pitch));
+				first = Math.min(first, n.start);
+				last = Math.max(last, n.start + n.duration);
+			}
+			var ly:Int = LANE_Y[i];
+			cbox(X0 + (v.offset + first - page) * pp, ly, (last - first) * pp, 3, TRACK_COLOR[i]);
+			var span:Float = Math.max(1, hi - lo);
+			for (n in v.notes)
+			{
+				var ny:Float = ly + 6 + (hi - n.pitch) / span * (LANE_H - 11);
+				cbox(X0 + (v.offset + n.start - page) * pp, ny, Math.max(2, n.duration * pp), 3, 0xFFFFFFFF);
+			}
+		}
+
+		// ---- piano roll della traccia selezionata ----
+		for (n in cv.notes)
+		{
+			if (n.pitch < low || n.pitch >= low + ROWS)
+				continue;
+			var ry:Int = ROLL_Y + (low + ROWS - 1 - n.pitch) * ROW_H;
+			var nx:Float = X0 + (cv.offset + n.start - page) * pp;
+			var nw:Float = Math.max(3, n.duration * pp);
+			cbox(nx, ry, nw, ROW_H - 1, n == selected ? 0xFFFFCA66 : TRACK_COLOR[track]);
+			if (n.slide != 0) // marcatore dello slide: dove arriva la nota alla fine
+				cbox(nx + nw - 4, ry - n.slide * ROW_H, 4, ROW_H - 1, 0xFFFF8A3D);
+		}
+
+		// ---- cursore ----
+		var cx:Float = X0 + (cursor - page) * pp;
+		if (cx >= X0 && cx <= X1)
+			{
+				box(cx, RULER_Y, 2, LANE_Y[1] + LANE_H - RULER_Y, 0xFFFFFFFF);
+				box(cx, ROLL_Y, 2, bottom - ROLL_Y, 0xFFFFFFFF);
+			}
+
+		for (i in poolIdx...pool.length)
+			pool[i].visible = false;
+
+		bd.unlock();
+		canvas.dirty = true;
+	}
+
+	// ------------------------------------------------------------------
+	// progetto ed export
+	// ------------------------------------------------------------------
+	function project(save:Bool)
+	{
+		if (save)
+			pick('json', function(p)
+			{
+				File.saveContent(p, haxe.Json.stringify({
+					song: songName,
+					inst: instPath,
+					tracks: [for (v in voices) {root: v.root, threshold: v.threshold, offset: v.offset, path: v.source, notes: v.notes, muted: v.muted}]
+				}));
+				setStatus('Progetto salvato');
+			}, SAVE);
+		else
+			pick('json', function(p)
+			{
+				var data:Dynamic = haxe.Json.parse(File.getContent(p));
+				var tracks:Array<Dynamic> = data.tracks;
+				if (tracks.length != 2)
+					throw 'Servono due tracce';
+				var vs:Array<CoverVoice> = [];
+				for (t in tracks)
+				{
+					var v:CoverVoice = new CoverVoice();
+					v.root = t.root;
+					v.threshold = t.threshold;
+					if (t.path != '')
+						v.load(t.path);
+					v.offset = t.offset;
+					v.notes = t.notes;
+					v.muted = t.muted;
+					vs.push(v);
+				}
+				var snd:Sound = (data.inst == '') ? Paths.inst(data.song) : Sound.fromFile(data.inst);
+				halt();
+				voices = vs;
+				songName = data.song;
+				setInst(snd, data.inst);
+				rendered = [null, null];
+				renderDirty = [true, true];
+				cursor = page = 0;
+				choose(0);
+				setStatus('Progetto aperto');
+			});
+	}
+
+	function exportAudio(split:Bool)
+		pick('', function(dir)
+		{
+			var end:Float = totalSeconds();
+			var a:Bytes = voices[0].render(end);
+			var b:Bytes = voices[1].render(end);
+			setStatus('Export in corso...');
+			if (split)
+			{
+				saveWav(dir + '/Voices_Opponent.wav', a);
+				saveWav(dir + '/Voices_Player.wav', b);
+			}
+			else
+			{
+				for (i in 0...Std.int(a.length / 2))
+				{
+					var j:Int = i * 2;
+					var x:Int = a.getUInt16(j);
+					var y:Int = b.getUInt16(j);
+					var sum:Int = (x >= 32768 ? x - 65536 : x) + (y >= 32768 ? y - 65536 : y);
+					a.setUInt16(j, Std.int(Math.max(-32768, Math.min(32767, sum))) & 65535);
+				}
+				saveWav(dir + '/Voices.wav', a);
+			}
+			setStatus('Esportato in ' + dir);
+		}, OPEN_DIRECTORY);
+
+	/** Scrive un WAV 16 bit mono 44.1 kHz. Nessun programma esterno. */
+	function saveWav(path:String, b:Bytes)
+		File.saveBytes(path, CoverVoice.wav(b));
+
+	override function destroy()
+	{
+		for (s in [instSnd, previewSnd].concat(voiceSnd))
+		{
+			if (s == null)
+				continue;
+			s.stop();
+			FlxG.sound.list.remove(s, true);
+			s.destroy();
+		}
+		super.destroy();
+	}
 }
+#end
