@@ -131,24 +131,15 @@ class MainMenuState extends MusicBeatState
 			rightItem.x -= rightItem.width;
 		}
 
-		var buildLine:String = BuildInfo.versionLine();
-		var hasBuildLine:Bool = buildLine.length > 0;
-		var psychVer:FlxText = new FlxText(safeX(12), FlxG.height - (hasBuildLine ? 64 : 44), 0, "Psych Engine v" + psychEngineVersion, 12);
+		var psychVer:FlxText = new FlxText(safeX(12), FlxG.height - 44, 0, "Super Plus Engine 1.5", 12);
 		psychVer.scrollFactor.set();
 		psychVer.setFormat(Paths.font("vcr.ttf"), 16, FlxColor.WHITE, LEFT, FlxTextBorderStyle.OUTLINE, FlxColor.BLACK);
 		add(psychVer);
-		var fnfVer:FlxText = new FlxText(safeX(12), FlxG.height - (hasBuildLine ? 44 : 24), 0, "Friday Night Funkin' v" + fnfVersion, 12);
+		var fnfVer:FlxText = new FlxText(safeX(12), FlxG.height - 24, 0, "Friday Night Funkin' v" + fnfVersion, 12);
 		fnfVer.scrollFactor.set();
 		fnfVer.setFormat(Paths.font("vcr.ttf"), 16, FlxColor.WHITE, LEFT, FlxTextBorderStyle.OUTLINE, FlxColor.BLACK);
 		leftWatermarkText = fnfVer;
 		add(fnfVer);
-		if (hasBuildLine)
-		{
-			var buildVer:FlxText = new FlxText(safeX(12), FlxG.height - 24, 0, buildLine, 12);
-			buildVer.scrollFactor.set();
-			buildVer.setFormat(Paths.font("vcr.ttf"), 16, FlxColor.WHITE, LEFT, FlxTextBorderStyle.OUTLINE, FlxColor.BLACK);
-			add(buildVer);
-		}
 		changeItem();
 
 		#if ACHIEVEMENTS_ALLOWED
