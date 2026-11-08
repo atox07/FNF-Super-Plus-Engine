@@ -811,14 +811,36 @@ class Paths
 
 	public static var currentTrackedSounds:Map<String, Sound> = AssetCache.currentTrackedSounds;
 
+	static function resolveAudioFile(key:String, folder:String, modsAllowed:Bool):String
+	{
+		var name = Language.getFileTranslation(key);
+		var ogg = getPath(name + '.' + SOUND_EXT, SOUND, folder, modsAllowed);
+		#if sys
+		var wav = getPath(name + '.wav', SOUND, folder, modsAllowed);
+		// A mod override takes precedence over the built-in version.
+		if (modsAllowed && ogg != null && !ogg.startsWith('assets/') && sys.FileSystem.exists(ogg)
+			&& (wav == null || wav.startsWith('assets/') || !sys.FileSystem.exists(wav)))
+			return ogg;
+		if (wav != null && (sys.FileSystem.exists(wav) || OpenFlAssets.exists(wav)))
+			return wav;
+		#end
+		return ogg;
+	}
+
 	public static function returnSound(key:String, ?path:String, ?modsAllowed:Bool = true, ?beepOnNull:Bool = true)
 	{
-		var file:String = getPath(Language.getFileTranslation(key) + '.$SOUND_EXT', SOUND, path, modsAllowed);
+		var file:String = resolveAudioFile(key, path, modsAllowed);
 
 		// trace('precaching sound: $file');
 		if (!currentTrackedSounds.exists(file))
 		{
-			var sound:Sound = AssetLoader.loadSound(file);
+			var sound:Sound;
+			#if sys
+			if (file != null && file.endsWith('.wav') && sys.FileSystem.exists(file))
+				sound = Sound.fromFile(file);
+			else
+			#end
+				sound = AssetLoader.loadSound(file);
 
 			if (sound != null)
 			{
@@ -1056,7 +1078,10 @@ class Paths
 		return modFolders('videos/' + key + '.' + VIDEO_EXT);
 
 	inline static public function modsSounds(path:String, key:String)
-		return modFolders(path + '/' + key + '.' + SOUND_EXT);
+		{
+		var wav = modFolders(path + '/' + key + '.wav');
+		return safeModPathExists(wav) ? wav : modFolders(path + '/' + key + '.' + SOUND_EXT);
+	}
 
 	inline static public function modsImages(key:String)
 		return modFolders('images/' + key + '.png');
