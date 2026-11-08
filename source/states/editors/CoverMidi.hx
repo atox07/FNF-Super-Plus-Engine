@@ -9,11 +9,12 @@ typedef CoverNote = {
 	var pitch:Int;
 	var velocity:Int;
 	var channel:Int;
-	var slide:Int;
+	var slide:Int; // Legacy relative glide
+	@:optional var slideTarget:Bool;
 }
 
 class CoverMidi {
-	public static function read(bytes:Bytes):Array<CoverNote> {
+	public static function read(bytes:Bytes, ?onInitialTempo:Float->Void):Array<CoverNote> {
 		var f = new BytesInput(bytes);
 		f.bigEndian = true;
 		if (f.readString(4) != "MThd") throw "Missing MIDI header";
@@ -59,7 +60,16 @@ class CoverMidi {
 				}
 			}
 		}
+		for (event in tempo) if (event.us <= 0) throw "Invalid MIDI tempo";
 		tempo.sort((a,b)->a.tick == b.tick ? a.order-b.order : a.tick-b.tick);
+		if (onInitialTempo != null) {
+			var initialUs = 500000;
+			for (event in tempo) {
+				if (event.tick != 0) break;
+				initialUs = event.us;
+			}
+			onInitialTempo(60000000.0 / initialUs);
+		}
 		function seconds(t:Int):Float {
 			var last=0, us=500000, sum=0.;
 			for (e in tempo) {
