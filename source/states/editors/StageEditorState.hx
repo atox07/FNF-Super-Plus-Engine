@@ -154,6 +154,7 @@ class StageEditorState extends MusicBeatState implements PsychUIEventHandler.Psy
 			"E/Q - Camera Zoom In/Out",
 			"J/K/L/I - Move Camera",
 			"R - Reset Camera Zoom",
+			", / . - Preview stage changes (Lua curStep blocks)",
 			"Arrow Keys/Mouse & Right Click - Move Object",
 			"Ctrl + Left Click & Drag - Move the selected object (even if you miss it)",
 			"Ctrl + Left Click on another object - Select it (click again to cycle overlapping ones)",
@@ -212,7 +213,10 @@ class StageEditorState extends MusicBeatState implements PsychUIEventHandler.Psy
 				if (fromLua.length > 0)
 				{
 					stageJson.objects = fromLua;
-					showOutput('Loaded ${fromLua.length} object(s) from Lua.');
+					var nSpr:Int = [for (o in fromLua) if (!StageData.reservedNames.contains(o.type)) o].length;
+					showOutput('Loaded $nSpr sprite(s) from Lua.'
+						+ (luaSkippedHud > 0 ? ' $luaSkippedHud HUD sprite(s) skipped.' : '')
+						+ (luaPhases.length > 0 ? ' ${luaPhases.length} step change(s): use , and . to preview.' : ''));
 				}
 				else
 					showOutput('Lua found but no sprites could be read from it.', true);
@@ -285,6 +289,7 @@ class StageEditorState extends MusicBeatState implements PsychUIEventHandler.Psy
 				stageSprites.push(new StageEditorMetaSprite({type: character}, Reflect.field(this, character)));
 
 		updateSpriteListRadio();
+		applyPhasePreview();
 	}
 
 	function hcSpr(name:String, image:String, x:Float, y:Float, scrollX:Float = 1, scrollY:Float = 1, scale:Float = 1, filters:Dynamic = null):Dynamic
@@ -414,6 +419,18 @@ class StageEditorState extends MusicBeatState implements PsychUIEventHandler.Psy
 		spriteList_box.cameras = [camHUD];
 		add(spriteList_box);
 		addSpriteListBox();
+
+		// Preview of the stage changes found in the Lua (curStep blocks)
+		phaseGroup = new FlxSpriteGroup();
+		phaseGroup.cameras = [camHUD];
+		phaseGroup.scrollFactor.set();
+		phaseTxt = new FlxText(25, 246, 250, '', 12);
+		phaseTxt.scrollFactor.set();
+		phaseGroup.add(phaseTxt);
+		phaseGroup.add(new PsychUIButton(25, 284, '< Prev', function() stepPhase(-1)));
+		phaseGroup.add(new PsychUIButton(115, 284, 'Next >', function() stepPhase(1)));
+		phaseGroup.visible = phaseGroup.active = false;
+		add(phaseGroup);
 
 		var bg:FlxSprite = new FlxSprite(0, FlxG.height - 60).makeGraphic(1, 1, FlxColor.BLACK);
 		bg.cameras = [camHUD];
@@ -1979,6 +1996,9 @@ class StageEditorState extends MusicBeatState implements PsychUIEventHandler.Psy
 
 		super.update(elapsed);
 
+		if (phaseGroup != null)
+			phaseGroup.visible = phaseGroup.active = (luaPhases.length > 0 && UI_box.visible);
+
 		outputTime = Math.max(0, outputTime - elapsed);
 		outputTxt.alpha = outputTime;
 
@@ -2009,6 +2029,11 @@ class StageEditorState extends MusicBeatState implements PsychUIEventHandler.Psy
 			checkUIOnObject();
 			updateSelectedUI();
 		}
+
+		if (FlxG.keys.justPressed.COMMA)
+			stepPhase(-1);
+		else if (FlxG.keys.justPressed.PERIOD)
+			stepPhase(1);
 
 		if ((FlxG.keys.justPressed.F1 || touchPad.buttonF.justPressed) || (helpBg.visible && FlxG.keys.justPressed.ESCAPE))
 		{
@@ -2708,130 +2733,315 @@ class StageEditorState extends MusicBeatState implements PsychUIEventHandler.Psy
 		return Math.isNaN(f) ? def : f;
 	}
 
-	// Reads a hand-written stage Lua (no --@editor-meta): makeLuaSprite / makeAnimatedLuaSprite + setScrollFactor,
-	// scaleObject, setProperty(alpha/angle/flipX/flipY/antialiasing/color), addAnimationByPrefix, addLuaSprite.
+	var luaPhases:Array<LuaPhase> = [];
+	var luaSkippedHud:Int = 0;
+	var phaseIndex:Int = -1; // -1 = initial state
+	var phaseGroup:FlxSpriteGroup;
+	var phaseTxt:FlxText;
+
+	function luaNumOrNull(s:String):Null<Float>
+	{
+		if (s == null)
+			return null;
+		var f:Float = Std.parseFloat(s);
+		return Math.isNaN(f) ? null : f;
+	}
+
+	function countMatches(r:EReg, s:String):Int
+	{
+		var n:Int = 0;
+		var pos:Int = 0;
+		while (pos <= s.length && r.matchSub(s, pos))
+		{
+			n++;
+			var mp = r.matchedPos();
+			pos = mp.pos + (mp.len > 0 ? mp.len : 1);
+		}
+		return n;
+	}
+
+	// Reads a hand-written stage Lua (no --@editor-meta).
+	// - onCreate: makeLuaSprite / makeAnimatedLuaSprite / makeGraphic + setScrollFactor, scaleObject, setProperty,
+	//   addAnimationByPrefix, setObjectCamera (HUD sprites are skipped), addLuaSprite(name, front).
+	// - "if curStep == N then ... end" blocks (setProperty / doTweenAlpha/X/Y / scaleObject) become preview phases (luaPhases).
 	function parsePlainStageLua(luaPath:String):Array<Dynamic>
 	{
+		luaPhases = [];
+		luaSkippedHud = 0;
 		var created:Array<Dynamic> = [];
 		var byName:Map<String, Dynamic> = [];
 		var added:Array<String> = [];
+		var front:Map<String, Bool> = [];
+		var phaseMap:Map<Int, Map<String, Dynamic>> = [];
+
+		function setChange(step:Int, obj:String, field:String, v:Null<Float>)
+		{
+			if (v == null || !byName.exists(obj))
+				return;
+			var m:Map<String, Dynamic> = phaseMap.get(step);
+			if (m == null)
+			{
+				m = new Map<String, Dynamic>();
+				phaseMap.set(step, m);
+			}
+			var c:Dynamic = m.get(obj);
+			if (c == null)
+			{
+				c = {};
+				m.set(obj, c);
+			}
+			Reflect.setField(c, field, v);
+		}
 
 		#if sys
 		try
 		{
+			var strRe:EReg = ~/'[^']*'|"[^"]*"/g;
+			var funcRe:EReg = ~/\bfunction\s+([A-Za-z0-9_]+)\s*\(/;
+			var stepRe:EReg = ~/^(else)?if\s+(curStep|curBeat)\s*==\s*([0-9]+)\s+then/;
+			var thenRe:EReg = ~/\bthen\b/g;
+			var doRe:EReg = ~/\bdo\b/g;
+			var endRe:EReg = ~/\bend\b/g;
+			var funcKw:EReg = ~/\bfunction\b/g;
+
+			var depth:Int = 0;
+			var curFunc:String = '';
+			var stepBlock:Int = -1;
+			var stepDepth:Int = 0;
+
 			for (raw in File.getContent(luaPath).split('\n'))
 			{
 				var line:String = raw.trim();
-				if (line.startsWith('--'))
-					continue;
 				var cm:Int = line.indexOf('--');
+				if (cm == 0)
+					continue;
 				if (cm > 0)
 					line = line.substr(0, cm).trim();
+				if (line.length < 1)
+					continue;
 
-				var a:Array<String> = luaCallArgs(line, 'makeLuaSprite');
-				var animated:Bool = false;
-				if (a == null)
+				var plain:String = strRe.replace(line, '""'); // strings removed: keywords inside them must not count
+
+				if (depth == 0 && funcRe.match(plain))
+					curFunc = funcRe.matched(1);
+
+				// start of an "if curStep == N then" block (or an elseif of the same chain)
+				var isElseIf:Bool = plain.startsWith('elseif');
+				if (stepRe.match(plain))
 				{
-					a = luaCallArgs(line, 'makeAnimatedLuaSprite');
-					animated = (a != null);
-				}
-				if (a != null && a.length >= 2)
-				{
-					var img:String = a[1].replace('\\', '/');
-					var obj:Dynamic = {
-						type: animated ? 'animatedSprite' : 'sprite',
-						name: a[0],
-						image: img,
-						x: luaFloat(a[2], 0),
-						y: luaFloat(a[3], 0),
-						scale: [1.0, 1.0],
-						scroll: [1.0, 1.0],
-						alpha: 1,
-						angle: 0,
-						color: 'FFFFFF',
-						filters: LOW_QUALITY | HIGH_QUALITY,
-						flipX: false,
-						flipY: false,
-						antialiasing: true
-					};
-					if (animated)
+					var n:Int = Std.parseInt(stepRe.matched(3));
+					if (stepRe.matched(2) == 'curBeat')
+						n *= 4;
+					if (stepBlock < 0 && !isElseIf)
 					{
-						obj.animations = [];
-						obj.firstAnimation = null;
+						stepBlock = n;
+						stepDepth = depth;
 					}
-					created.push(obj);
-					byName.set(a[0], obj);
-					continue;
+					else if (stepBlock >= 0 && isElseIf && depth == stepDepth + 1)
+						stepBlock = n;
 				}
+				else if (stepBlock >= 0 && depth == stepDepth + 1 && (isElseIf || plain == 'else'))
+					stepBlock = -1; // another condition: not a step block anymore
 
-				a = luaCallArgs(line, 'setScrollFactor');
-				if (a != null && a.length >= 3 && byName.exists(a[0]))
-				{
-					byName.get(a[0]).scroll = [luaFloat(a[1], 1), luaFloat(a[2], 1)];
-					continue;
-				}
+				var isInit:Bool = (stepBlock < 0 && (curFunc == '' || curFunc == 'onCreate' || curFunc == 'onCreatePost'));
 
-				a = luaCallArgs(line, 'scaleObject');
-				if (a != null && a.length >= 2 && byName.exists(a[0]))
+				// ---------- sprite creation ----------
+				var a:Array<String> = null;
+				if (stepBlock < 0)
 				{
-					var sx:Float = luaFloat(a[1], 1);
-					byName.get(a[0]).scale = [sx, luaFloat(a[2], sx)];
-					continue;
-				}
-
-				a = luaCallArgs(line, 'setProperty');
-				if (a != null && a.length >= 2)
-				{
-					var dot:Int = a[0].lastIndexOf('.');
-					if (dot > 0 && byName.exists(a[0].substr(0, dot)))
+					a = luaCallArgs(line, 'makeLuaSprite');
+					var animated:Bool = false;
+					if (a == null)
 					{
-						var o:Dynamic = byName.get(a[0].substr(0, dot));
-						var prop:String = a[0].substr(dot + 1);
-						switch (prop)
+						a = luaCallArgs(line, 'makeAnimatedLuaSprite');
+						animated = (a != null);
+					}
+					if (a != null && a.length >= 2)
+					{
+						var img:String = a[1].replace('\\', '/');
+						var isNil:Bool = (img == 'nil' || img == '');
+						var obj:Dynamic = {
+							type: isNil ? 'square' : (animated ? 'animatedSprite' : 'sprite'),
+							name: a[0],
+							image: img,
+							x: luaFloat(a[2], 0),
+							y: luaFloat(a[3], 0),
+							scale: [1.0, 1.0],
+							scroll: [1.0, 1.0],
+							alpha: 1,
+							angle: 0,
+							color: 'FFFFFF',
+							filters: LOW_QUALITY | HIGH_QUALITY,
+							flipX: false,
+							flipY: false,
+							antialiasing: true
+						};
+						if (animated && !isNil)
 						{
-							case 'alpha': o.alpha = luaFloat(a[1], 1);
-							case 'angle': o.angle = luaFloat(a[1], 0);
-							case 'flipX': o.flipX = (a[1] == 'true');
-							case 'flipY': o.flipY = (a[1] == 'true');
-							case 'antialiasing': o.antialiasing = (a[1] == 'true');
-							case 'x': o.x = luaFloat(a[1], o.x);
-							case 'y': o.y = luaFloat(a[1], o.y);
-							case 'scale.x': o.scale = [luaFloat(a[1], 1), o.scale[1]];
-							case 'scale.y': o.scale = [o.scale[0], luaFloat(a[1], 1)];
+							obj.animations = [];
+							obj.firstAnimation = null;
+						}
+						created.push(obj);
+						byName.set(a[0], obj);
+						continue;
+					}
+
+					a = luaCallArgs(line, 'makeGraphic');
+					if (a != null && a.length >= 3 && byName.exists(a[0]))
+					{
+						var o:Dynamic = byName.get(a[0]);
+						o.type = 'square';
+						o.scale = [luaFloat(a[1], 1), luaFloat(a[2], 1)];
+						var col:String = (a[3] == null) ? 'FFFFFF' : a[3].replace('#', '').replace('0x', '').replace('0X', '');
+						if (col.length > 6)
+							col = col.substr(col.length - 6);
+						o.color = col.toUpperCase();
+						continue;
+					}
+				}
+
+				// ---------- initial properties (onCreate) ----------
+				if (isInit)
+				{
+					a = luaCallArgs(line, 'setScrollFactor');
+					if (a != null && a.length >= 3 && byName.exists(a[0]))
+					{
+						byName.get(a[0]).scroll = [luaFloat(a[1], 1), luaFloat(a[2], 1)];
+						continue;
+					}
+
+					a = luaCallArgs(line, 'scaleObject');
+					if (a != null && a.length >= 2 && byName.exists(a[0]))
+					{
+						var o:Dynamic = byName.get(a[0]);
+						if (o.type != 'square')
+						{
+							var sx:Float = luaFloat(a[1], 1);
+							o.scale = [sx, luaFloat(a[2], sx)];
+						}
+						continue;
+					}
+
+					a = luaCallArgs(line, 'setProperty');
+					if (a != null && a.length >= 2)
+					{
+						var dot:Int = a[0].lastIndexOf('.');
+						if (dot > 0 && byName.exists(a[0].substr(0, dot)))
+						{
+							var o:Dynamic = byName.get(a[0].substr(0, dot));
+							var prop:String = a[0].substr(dot + 1);
+							switch (prop)
+							{
+								case 'alpha': o.alpha = luaFloat(a[1], o.alpha);
+								case 'angle': o.angle = luaFloat(a[1], o.angle);
+								case 'flipX': o.flipX = (a[1] == 'true');
+								case 'flipY': o.flipY = (a[1] == 'true');
+								case 'antialiasing': o.antialiasing = (a[1] == 'true');
+								case 'x': o.x = luaFloat(a[1], o.x);
+								case 'y': o.y = luaFloat(a[1], o.y);
+								case 'scale.x': o.scale = [luaFloat(a[1], 1), o.scale[1]];
+								case 'scale.y': o.scale = [o.scale[0], luaFloat(a[1], 1)];
+							}
+						}
+						continue;
+					}
+
+					a = luaCallArgs(line, 'setObjectCamera');
+					if (a != null && a.length >= 2 && byName.exists(a[0]))
+					{
+						var cam:String = a[1].toLowerCase();
+						if (cam.indexOf('hud') >= 0 || cam.indexOf('other') >= 0)
+							byName.get(a[0]).hud = true;
+						continue;
+					}
+
+					a = luaCallArgs(line, 'addAnimationByPrefix');
+					if (a == null)
+						a = luaCallArgs(line, 'addAnimation');
+					if (a != null && a.length >= 3 && byName.exists(a[0]))
+					{
+						var o:Dynamic = byName.get(a[0]);
+						if (o.animations != null)
+						{
+							o.animations.push({
+								anim: a[1],
+								name: a[2],
+								fps: Std.int(luaFloat(a[3], 24)),
+								loop: (a[4] == 'true'),
+								indices: [],
+								offsets: [0, 0]
+							});
+							if (o.firstAnimation == null)
+								o.firstAnimation = a[1];
+						}
+						continue;
+					}
+				}
+
+				if (stepBlock < 0)
+				{
+					a = luaCallArgs(line, 'addLuaSprite');
+					if (a != null && a.length >= 1 && byName.exists(a[0]))
+					{
+						added.push(a[0]);
+						if (a[1] == 'true')
+							front.set(a[0], true);
+					}
+				}
+				else
+				{
+					// ---------- changes inside "if curStep == N" ----------
+					a = luaCallArgs(line, 'setProperty');
+					if (a != null && a.length >= 2)
+					{
+						var dot:Int = a[0].lastIndexOf('.');
+						if (dot > 0)
+						{
+							var on:String = a[0].substr(0, dot);
+							switch (a[0].substr(dot + 1))
+							{
+								case 'alpha': setChange(stepBlock, on, 'alpha', luaNumOrNull(a[1]));
+								case 'x': setChange(stepBlock, on, 'x', luaNumOrNull(a[1]));
+								case 'y': setChange(stepBlock, on, 'y', luaNumOrNull(a[1]));
+								case 'scale.x': setChange(stepBlock, on, 'sx', luaNumOrNull(a[1]));
+								case 'scale.y': setChange(stepBlock, on, 'sy', luaNumOrNull(a[1]));
+							}
 						}
 					}
-					continue;
-				}
 
-				a = luaCallArgs(line, 'setObjectCamera');
-				if (a != null)
-					continue;
+					a = luaCallArgs(line, 'doTweenAlpha');
+					if (a != null && a.length >= 3)
+						setChange(stepBlock, a[1], 'alpha', luaNumOrNull(a[2]));
+					a = luaCallArgs(line, 'doTweenX');
+					if (a != null && a.length >= 3)
+						setChange(stepBlock, a[1], 'x', luaNumOrNull(a[2]));
+					a = luaCallArgs(line, 'doTweenY');
+					if (a != null && a.length >= 3)
+						setChange(stepBlock, a[1], 'y', luaNumOrNull(a[2]));
 
-				a = luaCallArgs(line, 'addAnimationByPrefix');
-				if (a == null)
-					a = luaCallArgs(line, 'addAnimation');
-				if (a != null && a.length >= 3 && byName.exists(a[0]))
-				{
-					var o:Dynamic = byName.get(a[0]);
-					if (o.animations != null)
+					a = luaCallArgs(line, 'scaleObject');
+					if (a != null && a.length >= 2)
 					{
-						o.animations.push({
-							anim: a[1],
-							name: a[2],
-							fps: Std.int(luaFloat(a[3], 24)),
-							loop: (a[4] == 'true'),
-							indices: [],
-							offsets: [0, 0]
-						});
-						if (o.firstAnimation == null)
-							o.firstAnimation = a[1];
+						var sx:Null<Float> = luaNumOrNull(a[1]);
+						setChange(stepBlock, a[0], 'sx', sx);
+						setChange(stepBlock, a[0], 'sy', (a.length >= 3) ? luaNumOrNull(a[2]) : sx);
 					}
-					continue;
 				}
 
-				a = luaCallArgs(line, 'addLuaSprite');
-				if (a != null && a.length >= 1 && byName.exists(a[0]))
-					added.push(a[0]);
+				// ---------- block depth ----------
+				var opens:Int = countMatches(funcKw, plain) + countMatches(doRe, plain);
+				if (!isElseIf)
+					opens += countMatches(thenRe, plain);
+				if (plain.startsWith('repeat'))
+					opens++;
+				var closes:Int = countMatches(endRe, plain);
+				if (plain.startsWith('until'))
+					closes++;
+				depth = Std.int(Math.max(0, depth + opens - closes));
+				if (stepBlock >= 0 && depth <= stepDepth)
+					stepBlock = -1;
+				if (depth == 0)
+					curFunc = '';
 			}
 		}
 		catch (e:Dynamic)
@@ -2840,7 +3050,8 @@ class StageEditorState extends MusicBeatState implements PsychUIEventHandler.Psy
 		}
 		#end
 
-		var result:Array<Dynamic> = [];
+		var backList:Array<Dynamic> = [];
+		var frontList:Array<Dynamic> = [];
 		var source:Array<String> = added.length > 0 ? added : [for (o in created) o.name];
 		var used:Map<String, Bool> = [];
 		for (n in source)
@@ -2851,6 +3062,15 @@ class StageEditorState extends MusicBeatState implements PsychUIEventHandler.Psy
 			var o:Dynamic = byName.get(n);
 			if (o == null)
 				continue;
+			if (o.hud == true)
+			{
+				luaSkippedHud++;
+				continue;
+			}
+			Reflect.deleteField(o, 'hud');
+
+			if (o.type == 'square')
+				Reflect.deleteField(o, 'image');
 			if (o.type == 'animatedSprite' && (o.animations == null || o.animations.length < 1))
 			{
 				// no addAnimation lines: take them from the XML next to the image
@@ -2867,9 +3087,69 @@ class StageEditorState extends MusicBeatState implements PsychUIEventHandler.Psy
 				if (o.animations == null || o.animations.length < 1)
 					o.type = 'sprite';
 			}
-			result.push(o);
+			if (front.exists(n))
+				frontList.push(o);
+			else
+				backList.push(o);
 		}
+
+		// characters sit between the back sprites and the ones added with addLuaSprite(name, true)
+		var result:Array<Dynamic> = backList;
+		if (backList.length + frontList.length > 0)
+			result = result.concat([{type: 'gf'}, {type: 'dad'}, {type: 'boyfriend'}]);
+		result = result.concat(frontList);
+
+		var steps:Array<Int> = [for (k in phaseMap.keys()) k];
+		steps.sort(function(x:Int, y:Int):Int return x - y);
+		for (st in steps)
+			luaPhases.push({step: st, changes: phaseMap.get(st)});
 		return result;
+	}
+
+	function stepPhase(dir:Int)
+	{
+		if (luaPhases.length < 1)
+			return;
+		phaseIndex = Std.int(FlxMath.bound(phaseIndex + dir, -1, luaPhases.length - 1));
+		applyPhasePreview();
+	}
+
+	// Visual-only: nothing here touches the data that gets saved.
+	function applyPhasePreview()
+	{
+		if (phaseIndex >= luaPhases.length)
+			phaseIndex = luaPhases.length - 1;
+
+		for (m in stageSprites)
+			m.clearPreview();
+
+		if (phaseIndex >= 0)
+			for (m in stageSprites)
+			{
+				if (m.name == null)
+					continue;
+				for (i in 0...phaseIndex + 1)
+				{
+					var c:Dynamic = luaPhases[i].changes.get(m.name);
+					if (c == null)
+						continue;
+					if (Reflect.hasField(c, 'alpha')) m.pvAlpha = Reflect.field(c, 'alpha');
+					if (Reflect.hasField(c, 'x')) m.pvX = Reflect.field(c, 'x');
+					if (Reflect.hasField(c, 'y')) m.pvY = Reflect.field(c, 'y');
+					if (Reflect.hasField(c, 'sx')) m.pvSX = Reflect.field(c, 'sx');
+					if (Reflect.hasField(c, 'sy')) m.pvSY = Reflect.field(c, 'sy');
+				}
+			}
+
+		if (phaseTxt != null)
+		{
+			if (luaPhases.length < 1)
+				phaseTxt.text = '';
+			else if (phaseIndex < 0)
+				phaseTxt.text = 'Stage changes: Initial state\n(${luaPhases.length} steps found in the Lua)';
+			else
+				phaseTxt.text = 'Stage changes: step ${luaPhases[phaseIndex].step} [${phaseIndex + 1}/${luaPhases.length}]\nPREVIEW ONLY - edit in Initial state';
+		}
 	}
 
 	// Reads the "--@objects" line from the "--@editor-meta" block of a stage Lua.
@@ -3624,10 +3904,60 @@ class StageEditorMetaSprite
 			sprite.update(elapsed);
 	}
 
+	// Preview overrides (visual only, never saved): set while browsing the Lua's step changes.
+	public var pvAlpha:Null<Float> = null;
+	public var pvX:Null<Float> = null;
+	public var pvY:Null<Float> = null;
+	public var pvSX:Null<Float> = null;
+	public var pvSY:Null<Float> = null;
+
+	public function clearPreview()
+	{
+		pvAlpha = pvX = pvY = pvSX = pvSY = null;
+	}
+
 	public function draw(curFilters:LoadFilters)
 	{
-		if ((curFilters & filters) != 0 || StageData.reservedNames.contains(type))
+		if ((curFilters & filters) == 0 && !StageData.reservedNames.contains(type))
+			return;
+
+		if (pvAlpha == null && pvX == null && pvY == null && pvSX == null && pvSY == null)
+		{
 			sprite.draw();
+			return;
+		}
+
+		var ox:Float = sprite.x;
+		var oy:Float = sprite.y;
+		var oa:Float = sprite.alpha;
+		var osx:Float = sprite.scale.x;
+		var osy:Float = sprite.scale.y;
+		var offx:Float = sprite.offset.x;
+		var offy:Float = sprite.offset.y;
+		var ow:Float = sprite.width;
+		var oh:Float = sprite.height;
+
+		if (pvSX != null || pvSY != null)
+		{
+			sprite.scale.set(pvSX != null ? pvSX : osx, pvSY != null ? pvSY : osy);
+			sprite.updateHitbox();
+		}
+		if (pvX != null)
+			sprite.x = pvX;
+		if (pvY != null)
+			sprite.y = pvY;
+		if (pvAlpha != null)
+			sprite.alpha = pvAlpha;
+
+		sprite.draw();
+
+		sprite.scale.set(osx, osy);
+		sprite.offset.set(offx, offy);
+		sprite.width = ow;
+		sprite.height = oh;
+		sprite.x = ox;
+		sprite.y = oy;
+		sprite.alpha = oa;
 	}
 }
 
@@ -4149,4 +4479,10 @@ typedef PngEntry =
 	var name:String; // path relative to the images folder, without extension
 	var hasXml:Bool;
 	var root:String; // images folder it was found in (e.g. 'mods/images/', 'assets/shared/images/')
+}
+
+typedef LuaPhase =
+{
+	var step:Int;
+	var changes:Map<String, Dynamic>; // object name -> {alpha, x, y, sx, sy}
 }
