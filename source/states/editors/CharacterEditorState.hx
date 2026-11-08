@@ -524,8 +524,10 @@ class CharacterEditorState extends MusicBeatState implements PsychUIEventHandler
 		animationFramerate = new PsychUINumericStepper(animationInputText.x + 170, animationInputText.y, 1, 24, 0, 240, 0);
 		animationLoopCheckBox = new PsychUICheckBox(animationNameInputText.x + 170, animationNameInputText.y - 1, "Should it Loop?", 100);
 
-		animationDropDown = new PsychUIDropDownMenu(15, animationInputText.y - 55, [''], function(selectedAnimation:Int, pressed:String)
+		animationDropDown = new AnimationEditorDropDown(15, animationInputText.y - 55, [''], function(selectedAnimation:Int, pressed:String)
 		{
+			if (selectedAnimation < 0 || selectedAnimation >= character.animationsArray.length)
+				return;
 			var anim:AnimArray = character.animationsArray[selectedAnimation];
 			animationInputText.text = anim.anim;
 			animationNameInputText.text = anim.name;
@@ -629,8 +631,6 @@ class CharacterEditorState extends MusicBeatState implements PsychUIEventHandler
 					break;
 				}
 		});
-		reloadAnimList();
-		animationDropDown.selectedLabel = anims[0] != null ? anims[0].anim : '';
 
 		tab_group.add(new FlxText(animationDropDown.x, animationDropDown.y - 18, 100, 'Animations:'));
 		tab_group.add(new FlxText(animationInputText.x, animationInputText.y - 18, 100, 'Animation name:'));
@@ -646,6 +646,8 @@ class CharacterEditorState extends MusicBeatState implements PsychUIEventHandler
 		tab_group.add(addUpdateButton);
 		tab_group.add(removeButton);
 		tab_group.add(animationDropDown);
+		reloadAnimList();
+		animationDropDown.selectedLabel = anims[0] != null ? anims[0].anim : '';
 	}
 
 	var imageInputText:PsychUIInputText;
@@ -2294,6 +2296,32 @@ class CharacterEditorState extends MusicBeatState implements PsychUIEventHandler
 		altDragging = false;
 		_mousePoint.put();
 		super.destroy();
+	}
+}
+
+private class AnimationEditorDropDown extends PsychUIDropDownMenu
+{
+	override public function showDropDown(vis:Bool = true, scroll:Int = 0, onlyAllowed:Array<String> = null)
+	{
+		super.showDropDown(vis, scroll, onlyAllowed);
+		if (!vis)
+			return;
+
+		// Re-anchor recycled row graphics and their mouse targets after filtering or scrolling.
+		var rowY = behindText.y + behindText.height + 1;
+		@:privateAccess for (item in _items)
+		{
+			if (!item.visible)
+				continue;
+
+			item.cameras = cameras;
+			item.setPosition(behindText.x, rowY);
+			item.bg.setPosition(behindText.x, rowY);
+			item.text.setPosition(behindText.x, rowY + (item.bg.height - item.text.height) / 2);
+			rowY += item.bg.height;
+		}
+		bg.scale.y = rowY - behindText.y + 2;
+		bg.updateHitbox();
 	}
 }
 
