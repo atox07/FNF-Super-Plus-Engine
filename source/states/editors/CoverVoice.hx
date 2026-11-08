@@ -1,5 +1,7 @@
 package states.editors;
 
+#if sys
+
 import states.editors.CoverMidi.CoverNote;
 import haxe.io.Bytes;
 import lime.media.AudioBuffer;
@@ -69,4 +71,19 @@ class CoverVoice {
 		w.writeUInt16(1);w.writeUInt16(1);w.writeInt32(RATE);w.writeInt32(RATE*2);w.writeUInt16(2);w.writeUInt16(16);
 		w.writeString("data");w.writeInt32(b.length);w.write(b);return w.getBytes();
 	}
+
+	public function sliceCount():Int
+		return slices.length;
+
+	/** Anteprima di una singola nota (per sentirla mentre la sposti nel piano roll). */
+	public function preview(n:CoverNote):Bytes {
+		var oldNotes=notes, oldOffset=offset, oldMuted=muted;
+		var dur=Math.min(0.8,Math.max(0.15,n.duration));
+		notes=[{start:0.,duration:dur,pitch:n.pitch,velocity:n.velocity,channel:n.channel,slide:n.slide}];
+		offset=0; muted=false;
+		var b=render(dur+0.05);
+		notes=oldNotes; offset=oldOffset; muted=oldMuted;
+		return b;
+	}
 }
+#end
