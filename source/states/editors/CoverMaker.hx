@@ -64,7 +64,7 @@ class CoverMaker extends MusicBeatSubstate
 
 	static final HINT_ROLL:String = 'SPACE play/pause | ENTER stop | TAB slicer | ESC close | DEL delete | click ruler = move cursor | drag Dad/BF lane = move pattern\n'
 		+ 'Piano roll: click = new note, drag = move, right edge = resize, right click = delete | wheel = scroll, CTRL+wheel = zoom, ALT+wheel = pitch, SHIFT+wheel = octave\n'
-		+ 'CTRL+Z undo | CTRL+Y redo | CTRL+left drag = select notes | drag selection = move | DEL = delete | SLIDE = pitch glide';
+		+ 'CTRL+Z undo | CTRL+Y redo | CTRL+left drag = select notes | drag selection = move | DEL = delete | SLIDE ON = draw a target over a sustained note';
 	static final HINT_SLICER:String = 'SPACE play/pause | TAB back to piano roll | DEL delete slice | click slice = select + preview | SHIFT+click = cut here | drag a slice edge = resize\n'
 		+ 'Right click = delete slice | wheel = scroll | CTRL+wheel = zoom | Ruler: click to add, drag to move, right-click a marker to merge\n'
 		+ 'Every slice is a key: slice N plays on note (root + N). Highlighted rows in the piano roll show which keys have a slice.';
@@ -82,6 +82,11 @@ class CoverMaker extends MusicBeatSubstate
 	var songName:String;
 	var projectBpm:Float;
 	var chartBpm:Float;
+	static inline var BPM_X = 624;
+	static inline var BPM_W = 152;
+	static inline var GAIN_X = 44;
+	static inline var GAIN_W = 66;
+	var gainTrack:Int = 0;
 	var gridSec:Float; // 1 step in secondi
 	var voices:Array<CoverVoice> = [new CoverVoice(), new CoverVoice()]; // 0 = Dad (Opponent), 1 = BF (Player)
 	var instPath:String = '';
@@ -144,7 +149,7 @@ class CoverMaker extends MusicBeatSubstate
 	var mpool:Array<FlxText> = [];
 	var mpoolIdx:Int = 0;
 	var hintText:FlxText;
-	var lastSlide:Int = 5;
+	var slideMode:Bool = false;
 
 	// ---- slicer state ----
 	var slicerOpen:Bool = false;
@@ -173,6 +178,15 @@ class CoverMaker extends MusicBeatSubstate
 	{
 		projectBpm = bpm;
 		gridSec = 60 / projectBpm / 4;
+	}
+
+	function changeTempo(bpm:Float)
+	{
+		if (projectBpm == bpm) return;
+		record(-2, Std.string(projectBpm), Std.string(bpm));
+		setTempo(bpm);
+		updateInfo();
+		dirty = true;
 	}
 
 	override function create()
@@ -339,8 +353,6 @@ class CoverMaker extends MusicBeatSubstate
 				name: 'Note',
 				items: [
 					it('Toggle slide', toggleSlide, true),
-					it('Slide amount -', function() changeSlide(-1), true),
-					it('Slide amount +', function() changeSlide(1), true),
 					it('Delete note (DEL)', deleteNote, true)
 				]
 			},
@@ -401,19 +413,6 @@ class CoverMaker extends MusicBeatSubstate
 
 	inline function slideX():Int
 		return FlxG.width - 160;
-
-	/** 1 = '-', 2 = toggle, 3 = '+', 0 = none. */
-	function slideBtnAt(mx:Float, my:Float):Int
-	{
-		var x:Int = slideX();
-		if (my < MENU_Y + 1 || my >= MENU_Y + MENU_H - 1 || mx < x || mx >= x + 150)
-			return 0;
-		if (mx < x + 24)
-			return 1;
-		if (mx >= x + 126)
-			return 3;
-		return 2;
-	}
 
 	inline function songsX():Int
 		return menuHeaderX(0) + MENU_ITEM_W + 4;
@@ -485,16 +484,14 @@ class CoverMaker extends MusicBeatSubstate
 			mlbl(x + 8, MENU_Y + 4, menus[i].name, on ? 0xFFFFFFFF : 0xFFB8C0D8);
 		}
 
-		// SLIDE button (top right): turns the selected note into a slide / back to normal
-		var bx:Int = slideX();
-		var hasSel:Bool = selected != null;
-		var sl:Int = hasSel ? selected.slide : 0;
-		menuBox(bx, MENU_Y + 1, 24, MENU_H - 2, 0xFF2B3248);
-		menuBox(bx + 26, MENU_Y + 1, 98, MENU_H - 2, sl != 0 ? 0xFFFF8A3D : (hasSel ? 0xFF3C4766 : 0xFF2B3248));
-		menuBox(bx + 126, MENU_Y + 1, 24, MENU_H - 2, 0xFF2B3248);
-		mlbl(bx + 8, MENU_Y + 4, '-', 0xFFFFFFFF);
-		mlbl(bx + 134, MENU_Y + 4, '+', 0xFFFFFFFF);
-		mlbl(bx + 32, MENU_Y + 4, sl != 0 ? 'SLIDE ' + (sl > 0 ? '+' : '') + sl : 'SLIDE', sl != 0 ? 0xFF111111 : (hasSel ? 0xFFFFFFFF : 0xFF7F88A8));
+		menuBox(BPM_X, MENU_Y + 1, BPM_W, MENU_H - 2, 0xFF2B3248);
+		mlbl(BPM_X + 6, MENU_Y + 4, '-', 0xFFFFFFFF);
+		mlbl(BPM_X + 27, MENU_Y + 4, 'BPM ' + (Math.round(projectBpm * 100) / 100), 0xFFFFFFFF);
+		mlbl(BPM_X + BPM_W - 16, MENU_Y + 4, '+', 0xFFFFFFFF);
+
+		var bx = slideX();
+		menuBox(bx, MENU_Y + 1, 150, MENU_H - 2, slideMode ? 0xFFFF8A3D : 0xFF2B3248);
+		mlbl(bx + 16, MENU_Y + 4, slideMode ? 'SLIDE: ON' : 'SLIDE: OFF', slideMode ? 0xFF111111 : 0xFFFFFFFF);
 
 		if (menuOpen >= 0)
 		{
@@ -586,22 +583,23 @@ class CoverMaker extends MusicBeatSubstate
 		if (!FlxG.mouse.justPressed)
 			return false;
 
-		// SLIDE button
-		var sb:Int = slideBtnAt(mx, my);
-		if (sb > 0)
+		if (my >= MENU_Y && my < MENU_Y + MENU_H && mx >= BPM_X && mx < BPM_X + BPM_W)
 		{
 			setMenu(-1, -1);
-			try
+			var sign = mx < BPM_X + 24 ? -1 : (mx >= BPM_X + BPM_W - 24 ? 1 : 0);
+			if (sign != 0)
 			{
-				if (sb == 1)
-					changeSlide(-1);
-				else if (sb == 3)
-					changeSlide(1);
-				else
-					toggleSlide();
+				var increment = FlxG.keys.pressed.SHIFT ? 10.0 : (FlxG.keys.pressed.CONTROL ? 0.1 : 1.0);
+				changeTempo(Math.max(1, Math.min(999, Math.round((projectBpm + sign * increment) * 100) / 100)));
 			}
-			catch (e:Dynamic)
-				setStatus(Std.string(e));
+			setStatus('BPM -/+ : 1   |   SHIFT: 10   |   CTRL: 0.1');
+			return true;
+		}
+
+		if (my >= MENU_Y && my < MENU_Y + MENU_H && mx >= slideX() && mx < slideX() + 150)
+		{
+			setMenu(-1, -1);
+			toggleSlide();
 			return true;
 		}
 
@@ -797,7 +795,9 @@ class CoverMaker extends MusicBeatSubstate
 	function importMidi(i:Int)
 		pick('mid,midi', function(p)
 		{
-			var ns:Array<CoverNote> = CoverMidi.read(File.getBytes(p));
+			var initialBpm = projectBpm;
+			var ns:Array<CoverNote> = CoverMidi.read(File.getBytes(p), function(value) { initialBpm = value; });
+			changeTempo(initialBpm);
 			choose(i);
 			voices[i].notes = ns;
 			if (ns.length > 0)
@@ -833,42 +833,11 @@ class CoverMaker extends MusicBeatSubstate
 		edited(track);
 	}
 
-	function changeSlide(d:Int)
-	{
-		if (selected == null)
-		{
-			setStatus('Select a note first');
-			return;
-		}
-		selected.slide += d;
-		if (selected.slide != 0)
-			lastSlide = selected.slide;
-		edited(track);
-		setStatus(selected.slide == 0 ? 'Normal note' : 'Slide ' + (selected.slide > 0 ? '+' : '') + selected.slide + ' semitones on note');
-		previewNote(selected);
-	}
-
-	/** SLIDE button: selected note becomes a slide, pressed again it is a normal note. */
 	function toggleSlide()
 	{
-		if (selected == null)
-		{
-			setStatus('Select a note first, then press SLIDE');
-			return;
-		}
-		if (selected.slide != 0)
-		{
-			lastSlide = selected.slide;
-			selected.slide = 0;
-			setStatus('Normal note');
-		}
-		else
-		{
-			selected.slide = lastSlide;
-			setStatus('Slide note: ' + (lastSlide > 0 ? '+' : '') + lastSlide + ' semitones (use - / + to change)');
-		}
-		edited(track);
-		previewNote(selected);
+		slideMode = !slideMode;
+		redrawMenu();
+		setStatus(slideMode ? 'Draw a slide at the target pitch while the source note is sounding. Drag its right edge to set glide time.' : 'Draw normal notes.');
 	}
 
 	function deleteNote()
@@ -1229,7 +1198,7 @@ class CoverMaker extends MusicBeatSubstate
 	{
 		var v = voices[i];
 		return haxe.Json.stringify({path:v.source, notes:v.notes, root:v.root, threshold:v.threshold,
-			offset:v.offset, muted:v.muted, sensitivity:v.sensitivity, mode:v.mode, slices:v.slicesAsArray()});
+			offset:v.offset, muted:v.muted, gain:v.gain, sensitivity:v.sensitivity, mode:v.mode, slices:v.slicesAsArray()});
 	}
 
 	function resetHistory()
@@ -1256,7 +1225,12 @@ class CoverMaker extends MusicBeatSubstate
 		var state = redo ? entry.after : entry.before;
 		try
 		{
-			if (entry.track < 0)
+			if (entry.track == -2)
+			{
+				setTempo(Std.parseFloat(state));
+				updateInfo();
+			}
+			else if (entry.track < 0)
 			{
 				if (state == null)
 				{
@@ -1285,6 +1259,7 @@ class CoverMaker extends MusicBeatSubstate
 				v.threshold = t.threshold;
 				v.offset = t.offset;
 				v.muted = t.muted;
+				v.gain = t.gain == null ? 1.0 : Math.max(0, Math.min(2, t.gain));
 				v.sensitivity = t.sensitivity;
 				v.notes = t.notes;
 				v.setSlices(t.slices);
@@ -1652,7 +1627,14 @@ class CoverMaker extends MusicBeatSubstate
 		}
 		else if (my >= LANE_Y[0] && my < LANE_Y[1] + LANE_H)
 		{
-			choose(my < LANE_Y[1] - 2 ? 0 : 1);
+			var lane = my < LANE_Y[1] - 2 ? 0 : 1;
+			if (my >= LANE_Y[lane] && my < LANE_Y[lane] + LANE_H && mx >= GAIN_X - 3 && mx <= GAIN_X + GAIN_W + 3)
+			{
+				gainTrack = lane;
+				drag = 'gain';
+				return;
+			}
+			choose(lane);
 			if (mx >= X0)
 			{
 				drag = 'pattern';
@@ -1670,6 +1652,7 @@ class CoverMaker extends MusicBeatSubstate
 				return;
 			}
 			var hit = noteAt(mx, my);
+			if (slideMode && hit != null && hit.slideTarget != true) hit = null;
 			if (hit == null || !group.exists(hit)) clearSelection();
 			selected = hit;
 			if (selected == null)
@@ -1680,8 +1663,14 @@ class CoverMaker extends MusicBeatSubstate
 					duration: gridSec,
 					velocity: 100,
 					channel: 0,
-					slide: 0
+					slide: 0,
+					slideTarget: slideMode
 				};
+				if (slideMode)
+				{
+					var source = v.sourceAt(selected.start);
+					if (source != null) selected.channel = source.channel;
+				}
 				v.notes.push(selected);
 				drag = 'new';
 			}
@@ -1747,6 +1736,10 @@ class CoverMaker extends MusicBeatSubstate
 					item.note.pitch = item.pitch + pitchDelta;
 				}
 				dirty = true;
+			case 'gain':
+				var percent = Math.round(Math.max(0, Math.min(1, (mouseX() - GAIN_X) / GAIN_W)) * 200);
+				voices[gainTrack].gain = percent / 100.0;
+				dirty = true;
 			case 'pattern':
 				cur().offset = horizontal ? gridTime(oldValue + d, 0) : oldValue;
 				dirty = true;
@@ -1788,6 +1781,8 @@ class CoverMaker extends MusicBeatSubstate
 			updateBox();
 			redrawMenu();
 		}
+		else if (d == 'gain')
+			edited(gainTrack);
 		else if (d == 'seek')
 			seek(mouseTime());
 		else
@@ -1854,7 +1849,13 @@ class CoverMaker extends MusicBeatSubstate
 		for (i in 0...2)
 		{
 			cbox(X0, LANE_Y[i], X1 - X0, LANE_H, track == i ? LANE_BG_ON : LANE_BG);
-			lbl(6, LANE_Y[i] + 7, (i == 0 ? 'Dad' : 'BF') + (voices[i].muted ? ' [M]' : ''), TRACK_COLOR[i]);
+			lbl(6, LANE_Y[i] + 7, (i == 0 ? 'Dad' : 'BF'), voices[i].muted ? 0xFF858595 : TRACK_COLOR[i]);
+			var level = voices[i].gain;
+			var y = LANE_Y[i] + 22;
+			box(GAIN_X, y, GAIN_W + 1, 3, 0xFF384057);
+			box(GAIN_X, y, GAIN_W * level / 2, 3, TRACK_COLOR[i]);
+			box(GAIN_X + Math.round(GAIN_W * level / 2) - 2, y - 2, 4, 7, 0xFFDFE5ED);
+			lbl(GAIN_X, LANE_Y[i] + 1, (voices[i].muted ? 'M ' : '') + Math.round(level * 100) + '%', TRACK_COLOR[i]);
 		}
 
 		var cv:CoverVoice = cur();
@@ -1946,8 +1947,13 @@ class CoverMaker extends MusicBeatSubstate
 			var start = cv.offset + n.start;
 			var nx = gridX(start);
 			var nw = Math.max(1, gridX(start + n.duration) - nx);
-			cbox(nx, ry, nw, ROW_H - 1, (n == selected || group.exists(n)) ? 0xFFFFCA66 : (n.slide != 0 ? 0xFFFF8A3D : TRACK_COLOR[track]));
-			if (n.slide != 0) // slide note: glide line up to the target pitch
+			cbox(nx, ry, nw, ROW_H - 1, (n == selected || group.exists(n)) ? 0xFFFFCA66 : ((n.slideTarget == true || n.slide != 0) ? 0xFFFF8A3D : TRACK_COLOR[track]));
+			if (n.slideTarget == true)
+			{
+				var size = Std.int(Math.min(9, nw));
+				for (i in 0...size) cbox(nx + i, ry + ROW_H - 2 - i, 1, i + 1, 0xFF54321E);
+			}
+			else if (n.slide != 0) // legacy slide: glide line up to the target pitch
 			{
 				var steps:Int = Std.int(Math.max(4, Math.min(80, nw / 3)));
 				for (k in 0...steps + 1)
@@ -1997,7 +2003,7 @@ class CoverMaker extends MusicBeatSubstate
 					song: songName,
 					bpm: projectBpm,
 					inst: instPath,
-					tracks: [for (v in voices) {root: v.root, threshold: v.threshold, offset: v.offset, path: v.source, notes: v.notes, muted: v.muted, sensitivity: v.sensitivity, mode: v.mode, slices: v.slicesAsArray()}]
+					tracks: [for (v in voices) {root: v.root, threshold: v.threshold, offset: v.offset, path: v.source, notes: v.notes, muted: v.muted, gain: v.gain, sensitivity: v.sensitivity, mode: v.mode, slices: v.slicesAsArray()}]
 				}));
 				setStatus('Project saved');
 			}, SAVE);
@@ -2029,6 +2035,7 @@ class CoverMaker extends MusicBeatSubstate
 					v.offset = t.offset;
 					v.notes = t.notes;
 					v.muted = t.muted;
+					v.gain = t.gain == null ? 1.0 : Math.max(0, Math.min(2, t.gain));
 					vs.push(v);
 				}
 				var snd:Sound = (data.inst == '') ? Paths.inst(data.song) : Sound.fromFile(data.inst);
