@@ -472,8 +472,89 @@ class Character extends FlxSprite
 		return false;
 	}
 
+	#if (desktop && MODS_ALLOWED)
+	var xmlPollTime:Float = 0;
+	var atlasRevision:String = "";
+
+	function refreshExternalAtlas():Void
+	{
+		if (isAnimateAtlas || imageFile == null || animationsArray == null) return;
+		var keys:Array<String> = [];
+		addAtlasKeys(keys, imageFile);
+		for (a in animationsArray)
+			if (a != null && a.assetPath != null && !isAnimateAnimation(a, renderType))
+				addAtlasKeys(keys, normalizeAssetPath(a.assetPath));
+
+		var revisions:Array<String> = [];
+		var sources:Array<{xml:String, png:String, revision:String}> = [];
+		for (key in keys) {
+			var xml = Paths.getPath('images/$key.xml', TEXT);
+			var png = Paths.getPath('images/$key.png', IMAGE);
+			if (!sys.FileSystem.exists(xml) || !sys.FileSystem.exists(png)) {
+				sources.push(null);
+				revisions.push(key);
+				continue;
+			}
+			var xs = sys.FileSystem.stat(xml);
+			var ps = sys.FileSystem.stat(png);
+			var revision = xml + ':' + xs.mtime.getTime() + ':' + xs.size + ':'
+				+ png + ':' + ps.mtime.getTime() + ':' + ps.size;
+			sources.push({xml:xml, png:png, revision:revision});
+			revisions.push(revision);
+		}
+		var revision = revisions.join("|");
+		if (revision == atlasRevision || !Lambda.exists(sources, s -> s != null)) return;
+		var next:FlxAtlasFrames = null;
+		for (i in 0...keys.length) {
+			var src = sources[i];
+			var part:FlxAtlasFrames;
+			if (src == null) part = Paths.getAtlas(keys[i]);
+			else {
+				var key = 'character-reload:' + src.revision;
+				var graphic = FlxG.bitmap.get(key);
+				var xml = Paths.stripBOM(sys.io.File.getContent(src.xml));
+				if (Xml.parse(xml).firstElement().nodeName != "TextureAtlas") return;
+				if (graphic == null) {
+					var pixels = openfl.display.BitmapData.fromBytes(sys.io.File.getBytes(src.png));
+					if (pixels == null) return;
+					graphic = FlxG.bitmap.add(pixels, false, key);
+				}
+				part = FlxAtlasFrames.fromSparrow(graphic, xml);
+			}
+			if (part == null || part.frames.length == 0) return;
+			if (keys.length == 1) next = part;
+			else {
+				if (next == null) next = new FlxAtlasFrames(part.parent);
+				next.addAtlas(part, true);
+			}
+		}
+		var prev = animation.curAnim;
+		var name = prev == null ? null : prev.name;
+		var index = prev == null ? 0 : prev.curFrame;
+		var reversed = prev != null && prev.reversed;
+		var paused = prev != null && prev.paused;
+		frames = next;
+		for (a in animationsArray) {
+			if (a.indices != null && a.indices.length > 0)
+				animation.addByIndices(a.anim, a.name, a.indices, "", a.fps, a.loop);
+			else animation.addByPrefix(a.anim, a.name, a.fps, a.loop);
+		}
+		if (name != null && animation.getByName(name) != null) {
+			animation.play(name, true, reversed, Std.int(Math.min(index, animation.getByName(name).numFrames - 1)));
+			if (paused) animation.pause();
+		}
+		atlasRevision = revision;
+	}
+	#end
+
 	override function update(elapsed:Float)
 	{
+		#if (desktop && MODS_ALLOWED)
+		if (haxe.Timer.stamp() >= xmlPollTime) {
+			xmlPollTime = haxe.Timer.stamp() + 1;
+			try { refreshExternalAtlas(); } catch (_:Dynamic) {}
+		}
+		#end
 		if (currentUsesAnimateAtlas())
 		{
 			atlas.update(elapsed);
