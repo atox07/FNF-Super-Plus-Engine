@@ -492,6 +492,58 @@ class Paths
 	public static var currentTrackedAssets:Map<String, FlxGraphic> = AssetCache.currentTrackedAssets;
 	static var missingBitmapCache:Map<String, Bool> = AssetCache.missingBitmapCache;
 
+	#if (desktop && MODS_ALLOWED)
+	static var imageStamps:Map<String, Float> = new Map();
+	static var imageWatchStarted = false;
+	static var nextImageCheck:Float = 0;
+
+	static function watchImage(path:String):Void
+	{
+		if (imageStamps.exists(path) || !FileSystem.exists(path)) return;
+		try {
+			imageStamps.set(path, FileSystem.stat(path).mtime.getTime());
+		} catch (_:Dynamic) { return; }
+		if (!imageWatchStarted) {
+			imageWatchStarted = true;
+			flixel.FlxG.signals.postUpdate.add(checkImageChanges);
+		}
+	}
+
+	static function checkImageChanges():Void
+	{
+		var now = haxe.Timer.stamp();
+		if (now < nextImageCheck) return;
+		nextImageCheck = now + 1;
+		var expired:Array<String> = [];
+		for (path in imageStamps.keys()) {
+			var gpu = currentTrackedAssets.get(path);
+			var cpu = currentTrackedAssets.get(path + '#cpu');
+			if (gpu == null && cpu == null) {
+				expired.push(path);
+				continue;
+			}
+			try {
+				var stamp = FileSystem.stat(path).mtime.getTime();
+				if (stamp == imageStamps.get(path)) continue;
+				var pixels = BitmapData.fromBytes(File.getBytes(path));
+				if (pixels == null) continue;
+				for (graphic in [gpu, cpu]) {
+					if (graphic == null || graphic.width != pixels.width || graphic.height != pixels.height) continue;
+					if (graphic.bitmap != null && graphic.bitmap.readable)
+						graphic.bitmap.copyPixels(pixels, pixels.rect, new openfl.geom.Point());
+					else
+						graphic.bitmap = pixels.clone();
+				}
+				pixels.dispose();
+				imageStamps.set(path, stamp);
+			} catch (_:Dynamic) {
+				// An exporter may still be writing the PNG. Retry on the next check.
+			}
+		}
+		for (path in expired) imageStamps.remove(path);
+	}
+	#end
+
 	static public function image(key:String, ?parentFolder:String = null, ?allowGPU:Bool = true):FlxGraphic
 	{
 		key = key.replace('\\', '/');
@@ -501,6 +553,9 @@ class Paths
 			key += '.png';
 		var bitmap:BitmapData = null;
 		var resolvedFile:String = getPath(key, IMAGE, parentFolder, true);
+		#if (desktop && MODS_ALLOWED)
+		watchImage(resolvedFile);
+		#end
 
 		if (!allowGPU)
 		{
