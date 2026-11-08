@@ -2,7 +2,18 @@ package backend;
 
 import openfl.events.UncaughtErrorEvent;
 import openfl.events.ErrorEvent;
+import openfl.events.Event;
+import openfl.events.KeyboardEvent;
+import openfl.events.MouseEvent;
 import openfl.errors.Error;
+import openfl.display.Sprite;
+import openfl.text.TextField;
+import openfl.text.TextFormat;
+import openfl.text.TextFieldAutoSize;
+import openfl.text.TextFormatAlign;
+import openfl.ui.Keyboard;
+import flixel.FlxG;
+import states.MainMenuState;
 #if sys
 import sys.FileSystem;
 import sys.io.File;
@@ -13,56 +24,34 @@ using flixel.util.FlxArrayUtil;
 
 /**
  * Crash Handler.
- * @author YoshiCrafter29, Ne_Eo, MAJigsaw77 and Homura Akemi (HomuHomu833)
+ * @author Atox
+ *
+ * Modified: "null object reference" errors no longer crash the game.
+ * A black screen with white text is shown instead; pressing OK sends the player to MainMenuState.
  */
 class CrashHandler
 {
 	// Help link/repository to display in the event of a crash
 	public static final HELP_LINK:String = "https://github.com/Psych-Plus-Team/FNF-PlusEngine";
 
-	// Fun error messages for null references
-	static final NULL_ERROR_MESSAGES:Array<String> = [
-		"Oops! The code gods are not pleased... null reference found!",
-		"Houston, we have a null problem!",
-		"Error 404: Object not found (it's just null)",
-		"Congrats! You've discovered the void! (null)",
-		"The object decided to take a vacation (null)",
-		"*sad trombone* null happened",
-		"Null? More like... not cool!",
-		"The object went to buy cigarettes and never came back (null)",
-		"Achievement Unlocked: Find a null reference!",
-		"Null references are stored in the balls",
-		"Bruh moment: null reference detected",
-		"Skill issue: you tried to use a null object",
-		"The object said 'aight imma head out' (null)",
-		"Error: object.exe has stopped working (null)",
-		"Congratulations, you broke it! (null reference)",
-		"The object is on a date with undefined (null)",
-		"Null reference? In MY engine? It's more likely than you think",
-		"Object not found. Did you check under the couch? (null)"
-	];
+	// ---- Null error screen state ----
+	static var nullScreenActive:Bool = false;
+	static var nullScreen:Sprite;
+	static var nullText:TextField;
+	static var nullButton:Sprite;
 
 	/**
-	 * Adds a funny prefix to null-related error messages
+	 * Returns true if the message is a null object reference (or similar null access) error.
 	 */
-	static function funnyNullMessage(originalMessage:String):String
+	static function isNullError(msg:String):Bool
 	{
-		if (originalMessage == null)
-			return "Null error message (ironic, isn't it?)";
+		if (msg == null)
+			return false;
 
-		var lowerMsg = originalMessage.toLowerCase();
-		var isNullError = lowerMsg.contains("null")
-			|| lowerMsg.contains("object reference")
-			|| lowerMsg.contains("null pointer")
-			|| lowerMsg.contains("null object");
-
-		if (isNullError)
-		{
-			var funnyMsg = NULL_ERROR_MESSAGES[Std.random(NULL_ERROR_MESSAGES.length)];
-			return '$funnyMsg';
-		}
-
-		return originalMessage;
+		var l = msg.toLowerCase();
+		return l.contains("null object reference")
+			|| l.contains("null function pointer")
+			|| l.contains("null pointer");
 	}
 
 	public static function init():Void
@@ -93,12 +82,15 @@ class CrashHandler
 			m = '${err.text}';
 		}
 
-		// Add funny message for null errors
-		m = funnyNullMessage(m);
+		// A null error is already being shown: swallow repeated ones so the screen doesn't get spammed
+		var nullError:Bool = isNullError(m);
+		if (nullError && nullScreenActive)
+			return;
 
 		var stack = haxe.CallStack.exceptionStack();
 		var stackLabelArr:Array<String> = [];
 		var stackLabel:String = "";
+		var firstSource:String = null; // first "File.hx line N" found in the stack
 		for (e in stack)
 		{
 			switch (e)
@@ -108,6 +100,8 @@ class CrashHandler
 				case Module(c):
 					stackLabelArr.push('Module ${c}');
 				case FilePos(parent, file, line, col):
+					if (firstSource == null)
+						firstSource = '${file} line ${line}';
 					switch (parent)
 					{
 						case Method(cla, func):
@@ -123,7 +117,7 @@ class CrashHandler
 		}
 		stackLabel = stackLabelArr.join('\r\n');
 
-		var errorMsg = formatCrashText("Hardcoded Error", m, stackLabel, [
+		var errorMsg = formatCrashText(nullError ? "Null Object Reference" : "Hardcoded Error", m, stackLabel, [
 			"This crashed outside hxscript, so it is probably engine/source code or a compiled library path.",
 			"Check the first source line in the stack before the engine loop; that is usually the useful culprit.",
 			"If this only happens after editing scripts/classes, rebuild and make sure the exported assets are not stale."
@@ -136,6 +130,13 @@ class CrashHandler
 		saveErrorMessage(errorMsg);
 		#end
 
+		// Null object reference: don't crash, show the black screen instead
+		if (nullError)
+		{
+			showNullScreen(firstSource);
+			return;
+		}
+
 		#if android
 		showAndroidCrash(errorMsg, "Error!");
 		#else
@@ -145,15 +146,177 @@ class CrashHandler
 		lime.system.System.exit(1);
 	}
 
+	// ------------------------------------------------------------------
+	// Null error screen
+	// ------------------------------------------------------------------
+
+	private static function showNullScreen(where:String):Void
+	{
+		nullScreenActive = true;
+
+		// Freeze the broken state and silence everything
+		try
+		{
+			if (FlxG.state != null)
+				FlxG.state.active = false;
+		}
+		catch (_:Dynamic) {}
+
+		try
+		{
+			if (FlxG.sound != null)
+			{
+				if (FlxG.sound.music != null)
+					FlxG.sound.music.stop();
+				for (s in FlxG.sound.list)
+					if (s != null)
+						s.stop();
+			}
+		}
+		catch (_:Dynamic) {}
+
+		var stage = openfl.Lib.current.stage;
+
+		nullScreen = new Sprite();
+
+		// Text
+		nullText = new TextField();
+		var fmt = new TextFormat("_sans", 20, 0xFFFFFF);
+		fmt.align = TextFormatAlign.CENTER;
+		nullText.defaultTextFormat = fmt;
+		nullText.selectable = false;
+		nullText.mouseEnabled = false;
+		nullText.multiline = true;
+		nullText.wordWrap = true;
+		nullText.autoSize = TextFieldAutoSize.LEFT;
+
+		var body:String = "NULL OBJECT REFERENCE\n\n"
+			+ "Something tried to use an object that doesn't exist (null).\n"
+			+ "The game has been stopped to avoid a crash.\n";
+		if (where != null)
+			body += '\nWhere: $where\n';
+		#if sys
+		body += "\nA log was saved in the \"logs\" folder.\n";
+		#end
+		body += "\nPress OK to go back to the main menu.";
+		nullText.text = body;
+		nullScreen.addChild(nullText);
+
+		// OK button
+		nullButton = new Sprite();
+		nullButton.graphics.lineStyle(2, 0xFFFFFF, 1);
+		nullButton.graphics.beginFill(0x000000, 1);
+		nullButton.graphics.drawRect(0, 0, 160, 48);
+		nullButton.graphics.endFill();
+		nullButton.buttonMode = true;
+
+		var label = new TextField();
+		var lfmt = new TextFormat("_sans", 24, 0xFFFFFF);
+		lfmt.align = TextFormatAlign.CENTER;
+		label.defaultTextFormat = lfmt;
+		label.selectable = false;
+		label.mouseEnabled = false;
+		label.text = "OK";
+		label.width = 160;
+		label.height = 32;
+		label.y = 8;
+		nullButton.addChild(label);
+		nullButton.addEventListener(MouseEvent.CLICK, onNullOkClick);
+		nullScreen.addChild(nullButton);
+
+		stage.addChild(nullScreen);
+		stage.addEventListener(KeyboardEvent.KEY_DOWN, onNullKeyDown);
+		stage.addEventListener(Event.RESIZE, onNullResize);
+
+		layoutNullScreen();
+	}
+
+	private static function layoutNullScreen():Void
+	{
+		if (nullScreen == null)
+			return;
+
+		var stage = openfl.Lib.current.stage;
+		var w:Float = stage.stageWidth;
+		var h:Float = stage.stageHeight;
+
+		nullScreen.graphics.clear();
+		nullScreen.graphics.beginFill(0x000000, 1);
+		nullScreen.graphics.drawRect(0, 0, w, h);
+		nullScreen.graphics.endFill();
+
+		nullText.width = w * 0.8;
+		nullText.x = (w - nullText.width) / 2;
+
+		var gap:Float = 30;
+		var totalH:Float = nullText.height + gap + nullButton.height;
+		nullText.y = Math.max(10, (h - totalH) / 2);
+
+		nullButton.x = (w - nullButton.width) / 2;
+		nullButton.y = nullText.y + nullText.height + gap;
+	}
+
+	private static function onNullResize(_:Event):Void
+	{
+		layoutNullScreen();
+	}
+
+	private static function onNullKeyDown(e:KeyboardEvent):Void
+	{
+		if (e.keyCode == Keyboard.ENTER || e.keyCode == Keyboard.SPACE || e.keyCode == Keyboard.ESCAPE)
+			closeNullScreen();
+	}
+
+	private static function onNullOkClick(_:MouseEvent):Void
+	{
+		closeNullScreen();
+	}
+
+	private static function closeNullScreen():Void
+	{
+		if (!nullScreenActive)
+			return;
+
+		var stage = openfl.Lib.current.stage;
+		stage.removeEventListener(KeyboardEvent.KEY_DOWN, onNullKeyDown);
+		stage.removeEventListener(Event.RESIZE, onNullResize);
+
+		if (nullButton != null)
+			nullButton.removeEventListener(MouseEvent.CLICK, onNullOkClick);
+		if (nullScreen != null && nullScreen.parent != null)
+			nullScreen.parent.removeChild(nullScreen);
+
+		nullScreen = null;
+		nullText = null;
+		nullButton = null;
+
+		// Back to the main menu
+		try
+		{
+			FlxG.sound.playMusic(Paths.music('freakyMenu'));
+		}
+		catch (_:Dynamic) {}
+
+		try
+		{
+			FlxG.switchState(new MainMenuState());
+		}
+		catch (err:Dynamic)
+		{
+			trace('Could not switch to MainMenuState: $err');
+		}
+
+		nullScreenActive = false;
+	}
+
+	// ------------------------------------------------------------------
+
 	#if (cpp || hl)
 	private static function onError(message:Dynamic):Void
 	{
 		var crashMessage:String = "Unknown critical error";
 		if (message != null && message.length > 0)
-		{
-			// Add funny message for null errors
-			crashMessage = funnyNullMessage(Std.string(message));
-		}
+			crashMessage = Std.string(message);
 
 		var errorLog = formatCrashText("Critical Hardcoded Error", crashMessage, haxe.CallStack.toString(haxe.CallStack.exceptionStack(true)), [
 			"This is a native/critical crash path, so the app could not recover cleanly.",
@@ -244,4 +407,3 @@ class CrashHandler
 	}
 	#end
 }
-
