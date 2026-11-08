@@ -246,9 +246,13 @@ class StageEditorState extends MusicBeatState implements PsychUIEventHandler.Psy
 
 		if (stageJson.objects != null && stageJson.objects.length > 0)
 		{
-			list = StageData.addObjectsToState(stageJson.objects, gf, dad, boyfriend, null, true);
+			var indices = [for (i in 0...stageJson.objects.length) if (stageJson.objects[i].type != "video") i];
+			list = StageData.addObjectsToState([for (i in indices) stageJson.objects[i]], gf, dad, boyfriend, null, true);
 			for (key => spr in list)
-				stageSprites[spr.ID] = new StageEditorMetaSprite(stageJson.objects[spr.ID], spr);
+				stageSprites[indices[spr.ID]] = new StageEditorMetaSprite(stageJson.objects[indices[spr.ID]], spr);
+			#if (VIDEOS_ALLOWED && sys)
+			for (i in 0...stageJson.objects.length) if (stageJson.objects[i].type == "video") stageSprites[i] = videoMeta(stageJson.objects[i]);
+			#end
 		}
 
 		var hasBgLoaded:Bool = false;
@@ -545,6 +549,8 @@ class StageEditorState extends MusicBeatState implements PsychUIEventHandler.Psy
 			stageSprites.insert(newSel, spr);
 
 			updateSpriteListRadio();
+			updateSelectedUI();
+			unsavedProgress = true;
 		});
 		buttonMoveUp.cameras = [camHUD];
 		tab_group.add(buttonMoveUp);
@@ -565,17 +571,19 @@ class StageEditorState extends MusicBeatState implements PsychUIEventHandler.Psy
 			stageSprites.insert(newSel, spr);
 
 			updateSpriteListRadio();
+			updateSelectedUI();
+			unsavedProgress = true;
 		});
 		buttonMoveDown.cameras = [camHUD];
 		tab_group.add(buttonMoveDown);
 
-		var buttonCreate:PsychUIButton = new PsychUIButton(buttonX, buttonY + 60, 'New', function() createPopup.visible = createPopup.active = true);
+		var buttonCreate:PsychUIButton = new PsychUIButton(buttonX, buttonY + 120, 'New', function() createPopup.visible = createPopup.active = true);
 		buttonCreate.cameras = [camHUD];
 		buttonCreate.normalStyle.bgColor = FlxColor.GREEN;
 		buttonCreate.normalStyle.textColor = FlxColor.WHITE;
 		tab_group.add(buttonCreate);
 
-		var buttonDuplicate:PsychUIButton = new PsychUIButton(buttonX, buttonY + 90, 'Duplicate', function()
+		var buttonDuplicate:PsychUIButton = new PsychUIButton(buttonX, buttonY + 150, 'Duplicate', function()
 		{
 			var selected:Int = spriteListRadioGroup.checked;
 			if (selected < 0)
@@ -586,6 +594,14 @@ class StageEditorState extends MusicBeatState implements PsychUIEventHandler.Psy
 			if (spr == null || StageData.reservedNames.contains(spr.type))
 				return;
 
+			#if (VIDEOS_ALLOWED && sys)
+			if (spr.type == "video") {
+				var data = spr.formatToJson();
+				data.name = findUnoccupiedName(spr.name + "_copy");
+				insertMeta(videoMeta(data), 1);
+				return;
+			}
+			#end
 			var copiedSpr = new ModchartSprite();
 			var copiedMeta:StageEditorMetaSprite = new StageEditorMetaSprite(null, copiedSpr);
 			for (field in Reflect.fields(spr))
@@ -661,7 +677,7 @@ class StageEditorState extends MusicBeatState implements PsychUIEventHandler.Psy
 		buttonDuplicate.normalStyle.textColor = FlxColor.WHITE;
 		tab_group.add(buttonDuplicate);
 
-		var buttonDelete:PsychUIButton = new PsychUIButton(buttonX, buttonY + 120, 'Delete', function()
+		var buttonDelete:PsychUIButton = new PsychUIButton(buttonX, buttonY + 180, 'Delete', function()
 		{
 			var selected:Int = spriteListRadioGroup.checked;
 			if (selected < 0)
@@ -676,17 +692,24 @@ class StageEditorState extends MusicBeatState implements PsychUIEventHandler.Psy
 			spr.sprite = FlxDestroyUtil.destroy(spr.sprite);
 
 			updateSpriteListRadio();
+			updateSelectedUI();
+			unsavedProgress = true;
 		});
 		buttonDelete.cameras = [camHUD];
 		buttonDelete.normalStyle.bgColor = FlxColor.RED;
 		buttonDelete.normalStyle.textColor = FlxColor.WHITE;
 		tab_group.add(buttonDelete);
 
-		var buttonImportPng:PsychUIButton = new PsychUIButton(buttonX, buttonY + 150, 'Import PNG', openPngPicker);
+		var buttonImportPng:PsychUIButton = new PsychUIButton(buttonX, buttonY + 60, 'Import PNG', openPngPicker);
 		buttonImportPng.cameras = [camHUD];
 		buttonImportPng.normalStyle.bgColor = FlxColor.ORANGE;
 		buttonImportPng.normalStyle.textColor = FlxColor.WHITE;
 		tab_group.add(buttonImportPng);
+		#if (VIDEOS_ALLOWED && sys)
+		var videoButton = new PsychUIButton(buttonX, buttonY + 90, 'Import Video', function() openMediaPicker(true));
+		videoButton.cameras = [camHUD];
+		tab_group.add(videoButton);
+		#end
 	}
 
 	function showOutput(txt:String, isError:Bool = false)
@@ -858,20 +881,25 @@ class StageEditorState extends MusicBeatState implements PsychUIEventHandler.Psy
 				continue;
 			}
 
-			if (!file.toLowerCase().endsWith('.png'))
+			if (!file.toLowerCase().endsWith(videoPicker ? '.mp4' : '.png'))
 				continue;
 
 			var baseName:String = file.substr(0, file.length - 4);
-			found.push({name: prefix + baseName, hasXml: FileSystem.exists(folder + baseName + '.xml'), root: rootDir});
+			found.push({name: prefix + (videoPicker ? file : baseName), hasXml: !videoPicker && FileSystem.exists(folder + baseName + '.xml'), root: rootDir});
 		}
 		#end
 	}
 
-	function openPngPicker()
+	var videoPicker:Bool = false;
+	var pickerTitle:FlxText;
+	function openPngPicker() openMediaPicker(false);
+
+	function openMediaPicker(video:Bool)
 	{
+		videoPicker = video;
 		pngEntries = [];
 		var seen:Map<String, Bool> = [];
-		for (root in getImageRoots())
+		for (root in (video ? ["mods/videos/"] : getImageRoots()))
 		{
 			var tmp:Array<PngEntry> = [];
 			scanPngFolder(root, '', tmp, 0, root);
@@ -893,7 +921,8 @@ class StageEditorState extends MusicBeatState implements PsychUIEventHandler.Psy
 		if (pngPickerGroup == null)
 			buildPngPicker();
 
-		pngInfoText.text = (pngEntries.length > 0) ? '${pngEntries.length} PNG (mods + assets, all subfolders)' : 'No PNG found in mods/ or assets/';
+		pickerTitle.text = video ? "Import Video" : "Import PNG";
+		pngInfoText.text = video ? pngEntries.length + " MP4 in mods/videos/" : (pngEntries.length > 0) ? '${pngEntries.length} PNG (mods + assets, all subfolders)' : 'No PNG found in mods/ or assets/';
 		refreshPngRows();
 		pngPickerGroup.visible = pngPickerGroup.active = pngPickerOpen = true;
 	}
@@ -919,7 +948,8 @@ class StageEditorState extends MusicBeatState implements PsychUIEventHandler.Psy
 		pngPickerGroup.add(makePngRect(pngPanelX - 2, pngPanelY - 2, PNG_PICKER_W + 4, pngPanelH + 4, FlxColor.WHITE, 0.9));
 		pngPickerGroup.add(makePngRect(pngPanelX, pngPanelY, PNG_PICKER_W, pngPanelH, 0xFF1E1E26));
 
-		pngPickerGroup.add(makePngText(pngPanelX + 16, pngPanelY + 12, PNG_PICKER_W - 32, 'Import PNG', 20));
+		pickerTitle = makePngText(pngPanelX + 16, pngPanelY + 12, PNG_PICKER_W - 32, '', 20);
+		pngPickerGroup.add(pickerTitle);
 		pngInfoText = makePngText(pngPanelX + 16, pngPanelY + 42, PNG_PICKER_W - 32, '', 12, 0xFFB0B0B0);
 		pngPickerGroup.add(pngInfoText);
 
@@ -954,7 +984,7 @@ class StageEditorState extends MusicBeatState implements PsychUIEventHandler.Psy
 			if (idx < pngEntries.length)
 			{
 				var e:PngEntry = pngEntries[idx];
-				row.text = e.name + (e.hasXml ? '   [PNG + XML]' : '   [PNG]');
+				row.text = e.name + (videoPicker ? '   [MP4]' : e.hasXml ? '   [PNG + XML]' : '   [PNG]');
 				row.color = e.hasXml ? 0xFF8CFF9C : FlxColor.WHITE;
 			}
 			else
@@ -1064,8 +1094,31 @@ class StageEditorState extends MusicBeatState implements PsychUIEventHandler.Psy
 		return result;
 	}
 
+	#if (VIDEOS_ALLOWED && sys)
+	function videoMeta(data:Dynamic):StageEditorMetaSprite
+	{
+		var player = new StageLayerVideo(data.image, data.x, data.y);
+		var meta = new StageEditorMetaSprite(data, player);
+		meta.setScale();
+		meta.setScrollFactor();
+		for (key in ["x","y","angle","alpha","flipX","flipY"])
+			if (Reflect.field(data,key) != null) Reflect.setProperty(meta,key,Reflect.field(data,key));
+		return meta;
+	}
+	#end
+
 	function importPngEntry(entry:PngEntry)
 	{
+		#if (VIDEOS_ALLOWED && sys)
+		if (videoPicker)
+		{
+			var data:Dynamic = {type:"video", image:entry.name, name:findUnoccupiedName("video"),
+				x:FlxG.camera.scroll.x, y:FlxG.camera.scroll.y};
+			insertMeta(videoMeta(data));
+			closePngPicker();
+			return;
+		}
+		#end
 		var anims:Array<AnimArray> = entry.hasXml ? readXmlAnimations(entry.root + entry.name + '.xml') : [];
 		var type:String = (anims.length > 0) ? 'animatedSprite' : 'sprite';
 		var baseName:String = entry.name.substring(entry.name.lastIndexOf('/') + 1);
@@ -1145,9 +1198,13 @@ class StageEditorState extends MusicBeatState implements PsychUIEventHandler.Psy
 		createPopup.visible = createPopup.active = false;
 	}
 
+	var radioObjects:Array<StageEditorMetaSprite> = [];
+
 	function updateSpriteListRadio()
 	{
-		var _sel:String = (spriteListRadioGroup.checkedRadio != null ? spriteListRadioGroup.checkedRadio.label : null);
+		var previous = radioObjects[spriteListRadioGroup.checked];
+		radioObjects = stageSprites.copy();
+		radioObjects.reverse();
 		var nameList:Array<String> = [];
 		for (spr in stageSprites)
 		{
@@ -1169,14 +1226,7 @@ class StageEditorState extends MusicBeatState implements PsychUIEventHandler.Psy
 		nameList.reverse();
 
 		spriteListRadioGroup.labels = nameList;
-		for (radio in spriteListRadioGroup.radios)
-		{
-			if (radio.label == _sel)
-			{
-				spriteListRadioGroup.checkedRadio = radio;
-				break;
-			}
-		}
+		spriteListRadioGroup.checked = previous == null ? -1 : radioObjects.indexOf(previous);
 
 		final maxNum:Int = 19;
 		spriteList_box.resize(250, Std.int(Math.min(maxNum, spriteListRadioGroup.labels.length) * 25 + 35));
@@ -2286,8 +2336,9 @@ class StageEditorState extends MusicBeatState implements PsychUIEventHandler.Psy
 	function mouseToSpriteSpace(spr:FlxSprite, out:FlxPoint):FlxPoint
 	{
 		var cam:FlxCamera = FlxG.camera;
-		out.x = cam.scroll.x * spr.scrollFactor.x + cam.width / 2 + (FlxG.mouse.screenX - cam.width / 2) / cam.zoom;
-		out.y = cam.scroll.y * spr.scrollFactor.y + cam.height / 2 + (FlxG.mouse.screenY - cam.height / 2) / cam.zoom;
+		FlxG.mouse.getWorldPosition(cam, out);
+		out.x += cam.scroll.x * (spr.scrollFactor.x - 1);
+		out.y += cam.scroll.y * (spr.scrollFactor.y - 1);
 		return out;
 	}
 
@@ -2300,7 +2351,7 @@ class StageEditorState extends MusicBeatState implements PsychUIEventHandler.Psy
 		for (i in 0...stageSprites.length)
 		{
 			var meta:StageEditorMetaSprite = stageSprites[i];
-			if (meta == null || meta.sprite == null || !meta.isShown(curFilters))
+			if (meta == null || meta.sprite == null || !meta.visible || !meta.isShown(curFilters))
 				continue;
 
 			var spr:FlxSprite = meta.sprite;
@@ -2311,13 +2362,8 @@ class StageEditorState extends MusicBeatState implements PsychUIEventHandler.Psy
 			found.push({index: i, area: Math.abs(spr.frameWidth * spr.scale.x) * Math.abs(spr.frameHeight * spr.scale.y)});
 		}
 
-		var selIndex:Int = getSelectedIndex();
 		found.sort(function(a, b)
 		{
-			if (a.index == selIndex)
-				return -1;
-			if (b.index == selIndex)
-				return 1;
 			if (a.area != b.area)
 				return a.area < b.area ? -1 : 1;
 			return b.index - a.index; // on equal area, the one drawn in front wins
@@ -2412,7 +2458,8 @@ class StageEditorState extends MusicBeatState implements PsychUIEventHandler.Psy
 				var now:Float = haxe.Timer.stamp();
 				var sameSpot:Bool = Math.abs(FlxG.mouse.screenX - lastPickX) + Math.abs(FlxG.mouse.screenY - lastPickY) < 6
 					&& now - lastPickTime < 2 && !dragMoved;
-				pickCycle = sameSpot ? pickCycle + 1 : 0;
+				var selectedHit = candidates.indexOf(selIndex);
+				pickCycle = sameSpot ? selectedHit + 1 : Std.int(Math.max(0, selectedHit));
 				lastPickX = FlxG.mouse.screenX;
 				lastPickY = FlxG.mouse.screenY;
 				lastPickTime = now;
@@ -2452,9 +2499,8 @@ class StageEditorState extends MusicBeatState implements PsychUIEventHandler.Psy
 
 			if (showSelectionQuad && spriteListRadioGroup.checkedRadio != null)
 			{
-				var spr = stageSprites[spriteListRadioGroup.labels.length - spriteListRadioGroup.checked - 1];
-				if (spr != null)
-					drawDebugOnCamera(spr.sprite);
+				var spr = getSelected(false);
+				if (spr != null && spr.visible) spr.draw(curFilters, drawDebugOnCamera);
 			}
 		}
 
@@ -2527,29 +2573,26 @@ class StageEditorState extends MusicBeatState implements PsychUIEventHandler.Psy
 		@:privateAccess
 		var lineSize:Int = Std.int(Math.max(2, Math.floor(3 / FlxG.camera.zoom)));
 
-		var sprX:Float = spr.x - spr.offset.x;
-		var sprY:Float = spr.y - spr.offset.y;
-		var sprWidth:Int = Std.int(spr.frameWidth * spr.scale.x);
-		var sprHeight:Int = Std.int(spr.frameHeight * spr.scale.y);
-		for (num => sel in selectionSprites.members)
+		var left = -spr.origin.x * spr.scale.x;
+		var top = -spr.origin.y * spr.scale.y;
+		var right = left + spr.frameWidth * spr.scale.x;
+		var bottom = top + spr.frameHeight * spr.scale.y;
+		var rad = spr.angle * Math.PI / 180;
+		var c = Math.cos(rad), sn = Math.sin(rad);
+		for (i => edge in selectionSprites.members)
 		{
-			sel.x = sprX;
-			sel.y = sprY;
-			switch (num)
-			{
-				case 0:
-					sel.setGraphicSize(sprWidth, lineSize);
-				case 1:
-					sel.setGraphicSize(sprWidth, lineSize);
-					sel.y += sprHeight - lineSize;
-				case 2:
-					sel.setGraphicSize(lineSize, sprHeight);
-				case 3:
-					sel.setGraphicSize(lineSize, sprHeight);
-					sel.x += sprWidth - lineSize;
-			}
-			sel.updateHitbox();
-			sel.scrollFactor.set(spr.scrollFactor.x, spr.scrollFactor.y);
+			var horizontal = i < 2;
+			var dx = horizontal ? Math.min(left, right) : (i == 2 ? left : right);
+			var dy = horizontal ? (i == 0 ? top : bottom) : Math.min(top, bottom);
+			edge.scale.set(horizontal ? Math.abs(right-left) : lineSize, horizontal ? lineSize : Math.abs(bottom-top));
+			edge.origin.set(0, 0);
+			edge.offset.set(0, 0);
+			edge.angle = spr.angle;
+			edge.setPosition(spr.x - spr.offset.x + spr.origin.x + c*dx - sn*dy,
+				spr.y - spr.offset.y + spr.origin.y + sn*dx + c*dy);
+			edge.scrollFactor.copyFrom(spr.scrollFactor);
+			edge.width = edge.scale.x;
+			edge.height = edge.scale.y;
 		}
 		selectionSprites.draw();
 	}
@@ -3302,7 +3345,7 @@ class StageEditorState extends MusicBeatState implements PsychUIEventHandler.Psy
 				anchor = luaStr(groupOf.get(type));
 				continue;
 			}
-			if (type != 'square' && type != 'sprite' && type != 'animatedSprite')
+			if (type != 'video' && type != 'square' && type != 'sprite' && type != 'animatedSprite')
 				continue;
 
 			var name:String = (d.name != null) ? Std.string(d.name) : 'sprite' + body.length;
@@ -3333,7 +3376,9 @@ class StageEditorState extends MusicBeatState implements PsychUIEventHandler.Psy
 				conds.push('not isStoryMode');
 
 			var lines:Array<String> = [];
-			if (type == 'square')
+			if (type == 'video')
+				lines.push(luaCall('createInstance', [tag, luaStr('states.editors.StageLayerVideo'), '{' + luaStr(d.image) + ', ' + x + ', ' + y + '}']));
+			else if (type == 'square')
 			{
 				lines.push(luaCall('makeLuaSprite', [tag, 'nil', x, y]));
 				lines.push(luaCall('makeGraphic', [tag, '1', '1', "'FFFFFF'"]));
@@ -3399,10 +3444,10 @@ class StageEditorState extends MusicBeatState implements PsychUIEventHandler.Psy
 			// Position relative to the characters: behind all, in front of all, or in between.
 			var orderLine:String = null;
 			if (charsSeen >= totalChars && charsSeen > 0)
-				lines.push(luaCall('addLuaSprite', [tag, 'true']));
+				lines.push(luaCall(type == 'video' ? 'addInstance' : 'addLuaSprite', [tag, 'true']));
 			else
 			{
-				lines.push(luaCall('addLuaSprite', [tag, 'false']));
+				lines.push(luaCall(type == 'video' ? 'addInstance' : 'addLuaSprite', [tag, 'false']));
 				if (charsSeen > 0 && anchor != null)
 				{
 					orderLine = luaCall('setObjectOrder', [tag, luaCall('getObjectOrder', [anchor]) + ' + 1']);
@@ -3705,11 +3750,27 @@ class StageEditorState extends MusicBeatState implements PsychUIEventHandler.Psy
 	override function destroy()
 	{
 		destroySubStates = true;
+		for (meta in stageSprites) if (meta != null && meta.type == "video") meta.sprite.destroy();
 		if (animationEditor != null)
 			animationEditor = FlxDestroyUtil.destroy(animationEditor);
 		super.destroy();
 	}
 }
+
+#if (VIDEOS_ALLOWED && sys)
+@:keep
+class StageLayerVideo extends hxvlc.flixel.FlxVideoSprite
+{
+	public function new(file:String, x:Float, y:Float)
+	{
+		super();
+		setPosition(x, y);
+		var path = "mods/videos/" + file;
+		if (FileSystem.exists(path) && load(FileSystem.fullPath(path), [":input-repeat=65535", ":no-audio"]))
+			play();
+	}
+}
+#end
 
 class StageEditorMetaSprite
 {
@@ -3748,6 +3809,7 @@ class StageEditorMetaSprite
 
 	function set_image(v:String)
 	{
+		if (type == "video") return image = v;
 		var loaded:Bool = false;
 		try
 		{
@@ -3830,7 +3892,7 @@ class StageEditorMetaSprite
 		this.type = data.type;
 		switch (this.type)
 		{
-			case 'sprite', 'square', 'animatedSprite':
+			case 'video', 'sprite', 'square', 'animatedSprite':
 				for (v in ['name', 'image', 'scale', 'scroll', 'color', 'filters', 'antialiasing'])
 				{
 					var dat:Dynamic = Reflect.field(data, v);
@@ -3868,7 +3930,7 @@ class StageEditorMetaSprite
 		var obj:Dynamic = {type: type};
 		switch (type)
 		{
-			case 'square', 'sprite', 'animatedSprite':
+			case 'video', 'square', 'sprite', 'animatedSprite':
 				obj.name = name;
 				obj.x = x;
 				obj.y = y;
@@ -3916,14 +3978,14 @@ class StageEditorMetaSprite
 		pvAlpha = pvX = pvY = pvSX = pvSY = null;
 	}
 
-	public function draw(curFilters:LoadFilters)
+	public function draw(curFilters:LoadFilters, ?outline:FlxSprite->Void)
 	{
 		if ((curFilters & filters) == 0 && !StageData.reservedNames.contains(type))
 			return;
 
 		if (pvAlpha == null && pvX == null && pvY == null && pvSX == null && pvSY == null)
 		{
-			sprite.draw();
+			if (outline != null) outline(sprite); else sprite.draw();
 			return;
 		}
 
@@ -3949,7 +4011,7 @@ class StageEditorMetaSprite
 		if (pvAlpha != null)
 			sprite.alpha = pvAlpha;
 
-		sprite.draw();
+		if (outline != null) outline(sprite); else sprite.draw();
 
 		sprite.scale.set(osx, osy);
 		sprite.offset.set(offx, offy);
