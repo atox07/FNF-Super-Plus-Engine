@@ -26,17 +26,90 @@ class CoverVoice {
 
 	public function new() {}
 	public function load(path:String, manual:Bool = false) {
-		var buf=AudioBuffer.fromFile(path);
-		if(buf==null || buf.data==null || buf.bitsPerSample!=16) throw "Expected decoded 16-bit PCM WAV/OGG";
-		var b=buf.data.toBytes(), c=buf.channels;
-		var pcm=[for(i in 0...Std.int(b.length/(2*c))) {
-			var v=0.;
-			for(j in 0...c) {var k=(i*c+j)*2; var x=b.get(k)|(b.get(k+1)<<8); v+=(x>=32768?x-65536:x)/32768.;}
-			v/c;
-		}];
-		if (pcm.length == 0 || buf.sampleRate <= 0) throw "Empty or invalid audio file";
-		samples=pcm; rate=buf.sampleRate; source=path;
+		var decoded = haxe.io.Path.extension(path).toLowerCase() == "wav"
+			? decodeWav(sys.io.File.getBytes(path)) : null;
+		if (decoded == null) {
+			var buf = AudioBuffer.fromFile(path);
+			if (buf == null || buf.data == null || buf.bitsPerSample != 16 || buf.channels < 1 || buf.sampleRate < 1)
+				throw "Unsupported or invalid audio file";
+			var bytes = buf.data.toBytes();
+			decoded = {
+				pcm: readFrames(bytes, 0, bytes.length, buf.channels, 2, 1),
+				rate: buf.sampleRate
+			};
+		}
+		if (decoded.pcm.length == 0) throw "Empty audio file";
+		samples = decoded.pcm;
+		rate = decoded.rate;
+		source = path;
 		if (manual) resetMarkers(); else slice();
+	}
+
+	// Non-PCM WAV codecs are passed to the existing Lime decoder.
+	static function decodeWav(b:Bytes):Null<{pcm:Array<Float>, rate:Int}> {
+		if (b.length < 12 || b.getString(0, 4) != "RIFF" || b.getString(8, 4) != "WAVE") return null;
+		var size = b.getInt32(4);
+		if (size < 4 || size > b.length - 8) throw "Invalid WAV length";
+		var end = size + 8;
+		var pos = 12;
+		var fmt = -1, fmtSize = 0, data = -1, dataSize = 0;
+		while (end - pos >= 8) {
+			var tag = b.getString(pos, 4);
+			var length = b.getInt32(pos + 4);
+			pos += 8;
+			if (length < 0 || length > end - pos) throw "Truncated WAV chunk";
+			if (tag == "fmt " && fmt < 0) { fmt = pos; fmtSize = length; }
+			if (tag == "data" && data < 0) { data = pos; dataSize = length; }
+			pos += length;
+			if (pos < end) pos += length & 1;
+		}
+		if (fmtSize < 16 || data < 0) throw "Missing WAV format or audio data";
+		var format = b.getUInt16(fmt);
+		var channels = b.getUInt16(fmt + 2);
+		var hz = b.getInt32(fmt + 4);
+		var align = b.getUInt16(fmt + 12);
+		var bits = b.getUInt16(fmt + 14);
+		if (format == 0xfffe) {
+			if (fmtSize < 40 || b.getUInt16(fmt + 16) < 22) throw "Invalid extensible WAV format";
+			// KSDATAFORMAT_SUBTYPE_PCM / IEEE_FLOAT share the final 12 GUID bytes.
+			if (b.getInt32(fmt + 28) != 0x00100000 || b.getInt32(fmt + 32) != 0xaa000080
+				|| b.getInt32(fmt + 36) != 0x719b3800) return null;
+			format = b.getInt32(fmt + 24);
+		}
+		if (format != 1 && format != 3) return null;
+		if (format == 1 && bits != 8 && bits != 16 && bits != 24 && bits != 32)
+			throw "Unsupported PCM bit depth: " + bits;
+		if (format == 3 && bits != 32 && bits != 64) throw "Unsupported float bit depth: " + bits;
+		var width = bits >> 3;
+		if (channels < 1 || hz < 1 || align != channels * width || dataSize % align != 0)
+			throw "Invalid WAV frame layout";
+		return {pcm: readFrames(b, data, dataSize, channels, width, format), rate: hz};
+	}
+
+	static function readFrames(b:Bytes, pos:Int, length:Int, channels:Int, width:Int, format:Int):Array<Float> {
+		var pcm:Array<Float> = [];
+		var end = pos + length;
+		while (pos < end) {
+			var sum = 0.0;
+			for (c in 0...channels) {
+				var value:Float;
+				if (format == 3) {
+					value = width == 8 ? b.getDouble(pos) : b.getFloat(pos);
+					if (!Math.isFinite(value)) value = 0;
+				} else {
+					value = switch (width) {
+						case 1: (b.get(pos) - 128) / 128.0;
+						case 2: (b.getUInt16(pos) << 16 >> 16) / 32768.0;
+						case 3: ((b.getUInt16(pos) << 8 | b.get(pos + 2) << 24) >> 8) / 8388608.0;
+						default: b.getInt32(pos) / 2147483648.0;
+					};
+				}
+				sum += value / channels;
+				pos += width;
+			}
+			pcm.push(sum);
+		}
+		return pcm;
 	}
 
 	public function resetMarkers() {
@@ -243,7 +316,7 @@ class CoverVoice {
 			var k = Std.int(pos);
 			var next = k + 1 < s.b ? k + 1 : k;
 			var value = samples[k] + (samples[next] - samples[k]) * (pos - k);
-			pcm.setUInt16(frame * 2, Std.int(value * 32767) & 65535);
+			pcm.setUInt16(frame * 2, Std.int(Math.max(-1, Math.min(1, value)) * 32767) & 65535);
 		}
 		return pcm;
 	}
