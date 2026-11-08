@@ -14,6 +14,7 @@ class CoverVoice {
 	public var source = "";
 	public var offset = 0.;
 	public var muted = false;
+	public var gain:Float = 1.0;
 	public var notes:Array<CoverNote> = [];
 	var samples:Array<Float> = [];
 	var rate = RATE;
@@ -127,17 +128,58 @@ class CoverVoice {
 		}
 		if(first>=0)slices.push({a:first,b:last+1});
 	}
-	public function render(seconds:Float):Bytes {
+	// In polyphonic passages a target belongs to the most recently started
+	// sustained note on its MIDI channel. Equal starts use the higher pitch.
+	public function sourceAt(time:Float, channel:Int = -1):CoverNote {
+		var source:CoverNote = null;
+		for (n in notes) {
+			if (n.slideTarget == true || (channel >= 0 && n.channel != channel)) continue;
+			if (n.start <= time && time < n.start + n.duration &&
+				(source == null || n.start > source.start || (n.start == source.start && n.pitch > source.pitch)))
+				source = n;
+		}
+		return source;
+	}
+
+	public function render(seconds:Float):Bytes
+		return renderWindow(seconds, offset, null, false);
+
+	function renderWindow(seconds:Float, timeOffset:Float, solo:CoverNote, audition:Bool):Bytes {
 		var frames=Math.ceil(seconds*RATE);
 		var mix=new haxe.ds.Vector<Float>(frames);
 		for(i in 0...frames)mix[i]=0.;
-		if(!muted && slices.length>0) for(n in notes) {
+		var targets = new haxe.ds.ObjectMap<CoverNote, Array<CoverNote>>();
+		for (target in notes) {
+			if (target.slideTarget != true || target.duration <= 0) continue;
+			var source = sourceAt(target.start, target.channel);
+			if (source == null || (solo != null && solo != source)) continue;
+			if (!targets.exists(source)) targets.set(source, []);
+			targets.get(source).push(target);
+		}
+		if((audition || !muted) && slices.length>0) for(n in notes) {
+			if (n.slideTarget == true || (solo != null && n != solo)) continue;
 			var idx=Std.int(Math.max(0,Math.min(slices.length-1,n.pitch-root)));
 			var s=slices[idx], pos:Float=s.a;
-			var begin=Math.round((offset+n.start)*RATE), length=Math.round(n.duration*RATE);
+			var begin=Math.round((timeOffset+n.start)*RATE), length=Math.round(n.duration*RATE);
 			var step=rate/RATE*Math.pow(2,(n.pitch-root-idx)/12);
 			var accel=Math.pow(2,n.slide/(12.*Math.max(1,length)));
+			var baseStep = step;
+			var slides = targets.get(n);
+			if (slides != null) slides.sort(function(a,b) return Reflect.compare(a.start,b.start));
+			var index = 0;
+			var nextStart = slides == null ? length : Math.round((slides[0].start - n.start) * RATE);
+			var glideEnd = -1;
+			var goal = step;
 			for(j in 0...length) {
+				if (j == glideEnd) { step = goal; accel = 1; }
+				while (slides != null && index < slides.length && j >= nextStart) {
+					var target = slides[index++];
+					var span = Std.int(Math.max(1, Math.round(target.duration * RATE)));
+					goal = baseStep * Math.pow(2, (target.pitch - n.pitch) / 12.0);
+					accel = Math.pow(goal / step, 1.0 / span);
+					glideEnd = j + span;
+					nextStart = index < slides.length ? Math.round((slides[index].start - n.start) * RATE) : length;
+				}
 				var out=begin+j;
 				if(out>=frames)break;
 				var k=Std.int(pos), next=k+1<s.b?k+1:s.a;
@@ -148,7 +190,7 @@ class CoverVoice {
 			}
 		}
 		var b=Bytes.alloc(frames*2);
-		for(i in 0...frames)b.setUInt16(i*2,Std.int(Math.max(-1,Math.min(1,mix[i]))*32767)&65535);
+		for(i in 0...frames)b.setUInt16(i*2,Std.int(Math.max(-1,Math.min(1,mix[i] * gain))*32767)&65535);
 		return b;
 	}
 	public static function wav(b:Bytes):Bytes {
@@ -316,20 +358,18 @@ class CoverVoice {
 			var k = Std.int(pos);
 			var next = k + 1 < s.b ? k + 1 : k;
 			var value = samples[k] + (samples[next] - samples[k]) * (pos - k);
-			pcm.setUInt16(frame * 2, Std.int(Math.max(-1, Math.min(1, value)) * 32767) & 65535);
+			pcm.setUInt16(frame * 2, Std.int(Math.max(-1, Math.min(1, value * gain)) * 32767) & 65535);
 		}
 		return pcm;
 	}
 
 	/** Anteprima di una singola nota (per sentirla mentre la sposti nel piano roll). */
 	public function preview(n:CoverNote):Bytes {
-		var oldNotes=notes, oldOffset=offset, oldMuted=muted;
-		var dur=Math.min(0.8,Math.max(0.15,n.duration));
-		notes=[{start:0.,duration:dur,pitch:n.pitch,velocity:n.velocity,channel:n.channel,slide:n.slide}];
-		offset=0; muted=false;
-		var b=render(dur+0.05);
-		notes=oldNotes; offset=oldOffset; muted=oldMuted;
-		return b;
+		var source = n.slideTarget == true ? sourceAt(n.start, n.channel) : n;
+		if (source == null) return Bytes.alloc(2);
+		var start = Math.max(source.start, n.start - 0.06);
+		var duration = Math.min(1.2, Math.min(source.start + source.duration, n.start + n.duration + 0.08) - start);
+		return renderWindow(Math.max(0.01, duration), -start, source, true);
 	}
 }
 #end
