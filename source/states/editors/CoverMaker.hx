@@ -19,6 +19,7 @@ import sys.io.File;
 import sys.FileSystem;
 import backend.MusicBeatSubstate;
 import states.editors.CoverMidi.CoverNote;
+import states.editors.CoverMidi.CoverTempo;
 
 /**
 	Cover Maker - interfaccia Flixel in stile FNF.
@@ -93,7 +94,7 @@ class CoverMaker extends MusicBeatSubstate
 	static inline var KNOB_R = 7;
 	static inline var PITCH_RANGE = 2400; // cents, +/- 2 octaves
 	var pitchTrack:Int = 0;
-	var gridSec:Float; // 1 step in secondi
+	var tempoMap:CoverTempo;
 	var voices:Array<CoverVoice> = [new CoverVoice(), new CoverVoice()]; // 0 = Dad (Opponent), 1 = BF (Player)
 	var instPath:String = '';
 	var instLoaded:Bool = false;
@@ -178,22 +179,29 @@ class CoverMaker extends MusicBeatSubstate
 		super();
 		songName = song;
 		chartBpm = Math.isFinite(bpm) && bpm > 0 ? bpm : 120;
-		setTempo(chartBpm);
+		applyTempo(new CoverTempo([{step:0., bpm:chartBpm}]));
 	}
 
-	function setTempo(bpm:Float)
+	function applyTempo(map:CoverTempo)
 	{
-		projectBpm = bpm;
-		gridSec = 60 / projectBpm / 4;
+		tempoMap = map;
+		projectBpm = map.points[map.at(cursor)].bpm;
+		dirty = true;
+	}
+
+	function replaceTempo(map:CoverTempo)
+	{
+		record(-2, haxe.Json.stringify(tempoMap.points), haxe.Json.stringify(map.points));
+		applyTempo(map);
+		updateInfo();
 	}
 
 	function changeTempo(bpm:Float)
 	{
-		if (projectBpm == bpm) return;
-		record(-2, Std.string(projectBpm), Std.string(bpm));
-		setTempo(bpm);
-		updateInfo();
-		dirty = true;
+		var i = tempoMap.at(cursor);
+		var entries = tempoMap.points.copy();
+		entries[i] = {step:entries[i].step, bpm:bpm};
+		replaceTempo(new CoverTempo(entries));
 	}
 
 	override function create()
@@ -710,8 +718,8 @@ class CoverMaker extends MusicBeatSubstate
 	// The song origin is shared by the grid and both tracks.
 	function gridTime(time:Float, minimum:Float):Float
 	{
-		var first = Math.ceil(minimum / gridSec - 1e-9);
-		return Math.max(first, Math.round(time / gridSec)) * gridSec;
+		var first = Math.ceil(tempoMap.stepAt(minimum) - 1e-9);
+		return tempoMap.timeAt(Math.max(first, Math.round(tempoMap.stepAt(time))));
 	}
 
 	inline function gridX(time:Float):Int
@@ -805,9 +813,9 @@ class CoverMaker extends MusicBeatSubstate
 	function importMidi(i:Int)
 		pick('mid,midi', function(p)
 		{
-			var initialBpm = projectBpm;
-			var ns:Array<CoverNote> = CoverMidi.read(File.getBytes(p), function(value) { initialBpm = value; });
-			changeTempo(initialBpm);
+			var map = tempoMap;
+			var ns = CoverMidi.read(File.getBytes(p), null, true, function(value) { map = value; }, tempoMap);
+			replaceTempo(map);
 			choose(i);
 			voices[i].notes = ns;
 			if (ns.length > 0)
@@ -1237,7 +1245,7 @@ class CoverMaker extends MusicBeatSubstate
 		{
 			if (entry.track == -2)
 			{
-				setTempo(Std.parseFloat(state));
+				applyTempo(new CoverTempo(haxe.Json.parse(state)));
 				updateInfo();
 			}
 			else if (entry.track < 0)
@@ -1504,6 +1512,12 @@ class CoverMaker extends MusicBeatSubstate
 		}
 
 		handleMouse();
+		var bpmHere = tempoMap.points[tempoMap.at(cursor)].bpm;
+		if (projectBpm != bpmHere)
+		{
+			projectBpm = bpmHere;
+			updateInfo();
+		}
 
 		if (dirty)
 		{
@@ -1780,10 +1794,11 @@ class CoverMaker extends MusicBeatSubstate
 			selected = hit;
 			if (selected == null)
 			{
+				var onGrid = gridTime(t, v.offset);
 				selected = {
-					start: Math.max(0, gridTime(t, v.offset) - v.offset),
+					start: Math.max(0, onGrid - v.offset),
 					pitch: p,
-					duration: gridSec,
+					duration: tempoMap.stepLength(onGrid),
 					velocity: 127,
 					channel: 0,
 					slide: 0,
@@ -1892,7 +1907,7 @@ class CoverMaker extends MusicBeatSubstate
 				// every selected note gets the same delta
 				var right = drag == 'resizeR';
 				var free = FlxG.keys.pressed.ALT;
-				var minDur = free ? 0.005 : gridSec;
+
 				var off = cur().offset;
 				var edgeT = oldValue + d;
 				if (!free) edgeT = gridTime(off + edgeT, off) - off;
@@ -1900,6 +1915,7 @@ class CoverMaker extends MusicBeatSubstate
 				var lo = -1e9, hi = 1e9;
 				for (i in 0...moving.length)
 				{
+					var minDur = free ? 0.005 : tempoMap.stepLength(off + moving[i].start);
 					if (right)
 						lo = Math.max(lo, Math.min(0, minDur - movingDur[i]) ); // never shrink below the minimum, but do not force notes that are already shorter
 					else
@@ -1923,6 +1939,7 @@ class CoverMaker extends MusicBeatSubstate
 			case 'new', 'move':
 				var offset = cur().offset;
 				selected.start = horizontal ? Math.max(0, FlxG.keys.pressed.ALT ? oldValue + d : gridTime(offset + oldValue + d, offset) - offset) : oldValue;
+				if (drag == 'new') selected.duration = tempoMap.stepLength(offset + selected.start);
 				var np:Int = Std.int(Math.max(0, Math.min(127, oldPitch - Math.round((mouseY() - dragMy) / ROW_H))));
 				if (np != selected.pitch)
 				{
@@ -2063,18 +2080,23 @@ class CoverMaker extends MusicBeatSubstate
 		}
 
 		// One step per sixteenth note. Skip subdivisions only when they cannot fit a pixel.
-		var stride = 1;
-		while (stride * gridSec * pp < 1) stride *= 2;
-		var tick = Math.floor(page / (gridSec * stride)) * stride;
-		var lastTick = Math.ceil((page + secondsPerPage) / gridSec);
+		var lastTick = Math.ceil(tempoMap.stepAt(page + secondsPerPage));
+		var tick = Math.floor(tempoMap.stepAt(page));
 		while (tick <= lastTick)
 		{
-			var gx = gridX(tick * gridSec);
+			var time = tempoMap.timeAt(tick);
+			var segment = tempoMap.at(time);
+			var stride = 1;
+			while (stride * 15 / tempoMap.points[segment].bpm * pp < 1) stride *= 2;
+			var gx = gridX(time);
 			var beat = tick % 4 == 0;
 			var color = tick % 16 == 0 ? 0xFF697596 : (beat ? 0xFF505B79 : 0xFF3E4862);
 			if (beat) cbox(gx, LANE_Y[0], 1, INST_Y + 24 - LANE_Y[0], color);
 			cbox(gx, ROLL_Y, 1, bottom - ROLL_Y, color);
-			tick += stride;
+			var next = tick + stride - tick % stride;
+			if (segment + 1 < tempoMap.points.length)
+				next = Std.int(Math.min(next, Math.ceil(tempoMap.points[segment+1].step)));
+			tick = Std.int(Math.max(tick + 1, next));
 		}
 
 		// ---- instrumental ----
@@ -2176,7 +2198,8 @@ class CoverMaker extends MusicBeatSubstate
 			{
 				File.saveContent(p, haxe.Json.stringify({
 					song: songName,
-					bpm: projectBpm,
+					bpm: tempoMap.points[0].bpm,
+					tempoMap: tempoMap.points,
 					inst: instPath,
 					tracks: [for (v in voices) {root: v.root, threshold: v.threshold, offset: v.offset, path: v.source, notes: v.notes, muted: v.muted, gain: v.gain, pitch: v.pitch, sensitivity: v.sensitivity, mode: v.mode, slices: v.slicesAsArray()}]
 				}));
@@ -2214,16 +2237,18 @@ class CoverMaker extends MusicBeatSubstate
 					v.pitch = t.pitch == null ? 0.0 : Math.max(-PITCH_RANGE, Math.min(PITCH_RANGE, t.pitch));
 					vs.push(v);
 				}
+				var bpm = Std.parseFloat(Std.string(data.bpm));
+				var map = new CoverTempo(data.tempoMap != null ? data.tempoMap :
+					[{step:0., bpm:Math.isFinite(bpm) && bpm > 0 ? bpm : chartBpm}]);
 				var snd:Sound = (data.inst == '') ? Paths.inst(data.song) : Sound.fromFile(data.inst);
 				halt();
 				voices = vs;
 				songName = data.song;
-				var bpm:Float = Std.parseFloat(Std.string(data.bpm));
-				setTempo(Math.isFinite(bpm) && bpm > 0 ? bpm : chartBpm);
 				setInst(snd, data.inst);
 				rendered = [null, null];
 				renderDirty = [true, true];
 				cursor = page = 0;
+				applyTempo(map);
 				choose(0);
 				resetHistory();
 				setStatus('Project opened');
