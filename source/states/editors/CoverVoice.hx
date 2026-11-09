@@ -15,6 +15,8 @@ class CoverVoice {
 	public var offset = 0.;
 	public var muted = false;
 	public var gain:Float = 1.0;
+	/** Channel pitch in cents (FL Studio style), applied to every note of the voice. */
+	public var pitch:Float = 0.0;
 	public var notes:Array<CoverNote> = [];
 	var samples:Array<Float> = [];
 	/** Peak-normalisation factor of the source (applied at render time, slicing is unaffected). */
@@ -159,6 +161,7 @@ class CoverVoice {
 
 	function renderWindow(seconds:Float, timeOffset:Float, solo:CoverNote, audition:Bool):Bytes {
 		var frames=Math.ceil(seconds*RATE);
+		var chPitch=Math.pow(2,pitch/1200.0);
 		var mix=new haxe.ds.Vector<Float>(frames);
 		for(i in 0...frames)mix[i]=0.;
 		var targets = new haxe.ds.ObjectMap<CoverNote, Array<CoverNote>>();
@@ -174,7 +177,7 @@ class CoverVoice {
 			var idx=Std.int(Math.max(0,Math.min(slices.length-1,n.pitch-root)));
 			var s=slices[idx], pos:Float=s.a;
 			var begin=Math.round((timeOffset+n.start)*RATE), length=Math.round(n.duration*RATE);
-			var step=rate/RATE*Math.pow(2,(n.pitch-root-idx)/12);
+			var step=rate/RATE*Math.pow(2,(n.pitch-root-idx)/12)*chPitch;
 			var accel=Math.pow(2,n.slide/(12.*Math.max(1,length)));
 			var baseStep = step;
 			var slides = targets.get(n);
