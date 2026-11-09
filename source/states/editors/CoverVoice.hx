@@ -17,6 +17,8 @@ class CoverVoice {
 	public var gain:Float = 1.0;
 	public var notes:Array<CoverNote> = [];
 	var samples:Array<Float> = [];
+	/** Peak-normalisation factor of the source (applied at render time, slicing is unaffected). */
+	var norm:Float = 1.0;
 	var rate = RATE;
 	var slices:Array<{a:Int,b:Int}> = [];
 
@@ -26,6 +28,14 @@ class CoverVoice {
 	public var mode = 'silence';
 
 	public function new() {}
+
+	// Transparent below 0.8, then a smooth tanh knee that tops out at 1.0 (no hard clipping).
+	static inline function softClip(x:Float):Float {
+		var a = Math.abs(x);
+		if (a <= 0.8) return x;
+		var y = 0.8 + 0.2 * (1 - 2 / (Math.exp(10 * (a - 0.8)) + 1));
+		return x < 0 ? -y : y;
+	}
 	public function load(path:String, manual:Bool = false) {
 		var decoded = haxe.io.Path.extension(path).toLowerCase() == "wav"
 			? decodeWav(sys.io.File.getBytes(path)) : null;
@@ -41,6 +51,9 @@ class CoverVoice {
 		}
 		if (decoded.pcm.length == 0) throw "Empty audio file";
 		samples = decoded.pcm;
+		var peak = 0.;
+		for (x in samples) { var a = Math.abs(x); if (a > peak) peak = a; }
+		norm = peak > 0.0001 ? Math.min(8., 0.95 / peak) : 1.0;
 		rate = decoded.rate;
 		source = path;
 		if (manual) resetMarkers(); else slice();
@@ -184,13 +197,13 @@ class CoverVoice {
 				if(out>=frames)break;
 				var k=Std.int(pos), next=k+1<s.b?k+1:s.a;
 				var fade=Math.min(1,Math.min(j,length-1-j)/128.);
-				if(out>=0)mix[out]+=(samples[k]+(samples[next]-samples[k])*(pos-k))*n.velocity/127.*fade;
+				if(out>=0)mix[out]+=(samples[k]+(samples[next]-samples[k])*(pos-k))*n.velocity/127.*fade*norm;
 				pos=s.a+(pos-s.a+step)%(s.b-s.a);
 				step*=accel;
 			}
 		}
 		var b=Bytes.alloc(frames*2);
-		for(i in 0...frames)b.setUInt16(i*2,Std.int(Math.max(-1,Math.min(1,mix[i] * gain))*32767)&65535);
+		for(i in 0...frames)b.setUInt16(i*2,Std.int(softClip(mix[i] * gain)*32767)&65535);
 		return b;
 	}
 	public static function wav(b:Bytes):Bytes {
@@ -358,7 +371,7 @@ class CoverVoice {
 			var k = Std.int(pos);
 			var next = k + 1 < s.b ? k + 1 : k;
 			var value = samples[k] + (samples[next] - samples[k]) * (pos - k);
-			pcm.setUInt16(frame * 2, Std.int(Math.max(-1, Math.min(1, value * gain)) * 32767) & 65535);
+			pcm.setUInt16(frame * 2, Std.int(softClip(value * norm * gain) * 32767) & 65535);
 		}
 		return pcm;
 	}
