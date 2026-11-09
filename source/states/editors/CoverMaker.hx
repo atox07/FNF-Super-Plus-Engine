@@ -64,7 +64,7 @@ class CoverMaker extends MusicBeatSubstate
 
 	static final HINT_ROLL:String = 'SPACE play/pause | ENTER stop | TAB slicer | ESC close | DEL delete | click ruler = move cursor | drag Dad/BF lane = move pattern\n'
 		+ 'Piano roll: click = new note, drag = move, right edge = resize, right click = delete | wheel = scroll, CTRL+wheel = zoom, ALT+wheel = pitch, SHIFT+wheel = octave\n'
-		+ 'CTRL+Z undo | CTRL+Y redo | CTRL+left drag = select notes | drag selection = move | DEL = delete | SLIDE ON = draw a target over a sustained note';
+		+ 'CTRL+Z undo | CTRL+Y redo | CTRL+left drag = select notes | CTRL+A = select all | drag selection = move | DEL = delete | SLIDE ON = draw a target over a sustained note';
 	static final HINT_SLICER:String = 'SPACE play/pause | TAB back to piano roll | DEL delete slice | click slice = select + preview | SHIFT+click = cut here | drag a slice edge = resize\n'
 		+ 'Right click = delete slice | wheel = scroll | CTRL+wheel = zoom | Ruler: click to add, drag to move, right-click a marker to merge\n'
 		+ 'Every slice is a key: slice N plays on note (root + N). Highlighted rows in the piano roll show which keys have a slice.';
@@ -1466,6 +1466,10 @@ class CoverMaker extends MusicBeatSubstate
 		{
 			if (FlxG.keys.pressed.CONTROL && (FlxG.keys.justPressed.Z || FlxG.keys.justPressed.Y))
 				stepHistory(FlxG.keys.justPressed.Y);
+			else if (FlxG.keys.pressed.CONTROL && FlxG.keys.justPressed.A)
+			{
+				if (!slicerOpen) selectAll();
+			}
 			else if (FlxG.keys.justPressed.TAB)
 				toggleSlicer();
 			else if (FlxG.keys.justPressed.DELETE || FlxG.keys.justPressed.BACKSPACE)
@@ -1584,6 +1588,21 @@ class CoverMaker extends MusicBeatSubstate
 		selected = null;
 		group = new haxe.ds.ObjectMap();
 		moving = [];
+	}
+
+	// CTRL+A: select every note of the current track (also the ones scrolled out of view)
+	function selectAll()
+	{
+		clearSelection();
+		for (n in cur().notes)
+		{
+			group.set(n, true);
+			if (selected == null) selected = n;
+		}
+		if (selected != null)
+			setStatus('Selected ' + cur().notes.length + ' notes - drag one of them to move all, DEL to delete');
+		redrawMenu();
+		dirty = true;
 	}
 
 	function updateBox()
