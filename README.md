@@ -137,6 +137,7 @@ You need to have:
 - **Stage Editor Remake:** Stage editor got fixed and now it works, you can also drag and drop the parts of the stage in it.
 - **Hud Editor:** Added an HUD editor where you can literally add and edit parts, such as: Strums, healthbar, timebar. You can also do tweens to the strums and lots more!
 - **Outside of the Window:** You can now do cool events or scripts to work out of the window or generate other windows: Like in the Unrensposive fanmade mod.
+- **Cover Maker:** Added a simplified DAW to create covers just like in FL Studio (only much easier!) 
 
 # Features inherited from Plus Engine (after 1.0.4)
 
