@@ -54,10 +54,7 @@ class CoverMidi {
 						if (!active.exists(key)) active.set(key,[]);
 						active.get(key).push({tick:tick,v:v});
 					} else if ((kind == 8 || kind == 9) && active.exists(key) && active.get(key).length > 0) {
-						var list = active.get(key);
-						var idx = list.length - 1;
-						while (idx > 0 && list[idx].tick >= tick) idx--; // a note-on at this very tick is not what this note-off closes
-						var on = list.splice(idx, 1)[0];
+						var on = active.get(key).pop(); // LIFO: a note nested inside a same-pitch note closes first
 						raw.push({a:on.tick,b:tick,p:a,v:on.v,c:ch});
 					}
 				}
@@ -90,30 +87,49 @@ class CoverMidi {
 	// FL Studio slide notes arrive in the MIDI as plain notes lying on top of a longer
 	// note of the same channel. Those become slideTarget notes.
 	//  - normal: the note is inside the source and clearly shorter (maxRatio)
-	//  - tiny:   very short notes (<= tinyMax s, e.g. FL's 1-tick minimum) only need to START
-	//            inside the source, even if they overhang its end
+	//  - tiny:   very short notes (<= tinyMax s, FL's minimum is even zero-length) only need to
+	//            START inside the source, even if they overhang its end
+	//  - return: a slide back to the source's own pitch (same pitch as the source) counts only
+	//            after the source already has an earlier slide, e.g. 64 -> 60 -> 64
+	static function findSlideSource(all:Array<CoverNote>, n:CoverNote, maxRatio:Float, tinyMax:Float, eps:Float):CoverNote {
+		var source:CoverNote = null;
+		for (s in all) {
+			if (s == n || s.channel != n.channel || s.slideTarget == true) continue;
+			var end = s.start + s.duration;
+			var inside = s.start <= n.start + eps && n.start < end;
+			var contained = inside && n.start + n.duration <= end + eps && n.duration < s.duration * maxRatio;
+			var tiny = inside && n.duration <= tinyMax && n.duration < s.duration - 0.0001;
+			if ((contained || tiny) && (source == null || s.start > source.start)) source = s;
+		}
+		return source;
+	}
+
 	public static function detectSlides(notes:Array<CoverNote>, maxRatio:Float = 0.7, tinyMax:Float = 0.06, eps:Float = 0.005):Void {
-		var targets = new haxe.ds.ObjectMap<CoverNote, Int>();
 		var sorted = notes.copy();
 		sorted.sort((a, b) -> Reflect.compare(b.duration, a.duration)); // longest first
-		for (n in sorted) {
-			var source:CoverNote = null;
-			for (s in sorted) {
-				if (s == n || s.channel != n.channel || s.slideTarget == true) continue;
-				var end = s.start + s.duration;
-				var inside = s.start <= n.start + eps && n.start < end;
-				var contained = inside && n.start + n.duration <= end + eps && n.duration < s.duration * maxRatio;
-				var tiny = inside && n.duration <= tinyMax && n.duration < s.duration - 0.0001;
-				if ((contained || tiny) && (source == null || s.start > source.start)) source = s;
+		var targets = new haxe.ds.ObjectMap<CoverNote, Array<CoverNote>>();
+		// pass 0: slides to a different pitch; pass 1: returns to the source's own pitch
+		for (pass in 0...2) {
+			for (n in sorted) {
+				if (n.slideTarget == true) continue;
+				var source = findSlideSource(sorted, n, maxRatio, tinyMax, eps);
+				if (source == null) continue;
+				var same = source.pitch == n.pitch;
+				if ((pass == 1) != same) continue;
+				var list = targets.get(source);
+				if (same) {
+					var earlier = false;
+					if (list != null) for (t in list) if (t.start <= n.start + eps) earlier = true;
+					if (!earlier) continue;
+				}
+				n.slideTarget = true;
+				if (n.duration < 0.005) n.duration = 0.005; // zero-length notes would be skipped by the renderer
+				if (list == null) { list = []; targets.set(source, list); }
+				list.push(n);
 			}
-			if (source == null) continue;
-			// same pitch only counts as a slide when it returns after other slides of that source
-			if (source.pitch == n.pitch && !targets.exists(source)) continue;
-			n.slideTarget = true;
-			if (n.duration < 0.005) n.duration = 0.005; // zero-length notes would be skipped by the renderer
-			targets.set(source, (targets.exists(source) ? targets.get(source) : 0) + 1);
 		}
 	}
+
 	static function variable(r:BytesInput):Int {
 		var n=0;
 		for(i in 0...4) {var b=r.readByte(); n=(n<<7)|(b&127); if(b<128)return n;}
