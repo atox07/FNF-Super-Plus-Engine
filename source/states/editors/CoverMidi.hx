@@ -13,8 +13,55 @@ typedef CoverNote = {
 	@:optional var slideTarget:Bool;
 }
 
+typedef TempoPoint = { var step:Float; var bpm:Float; }
+
+class CoverTempo {
+	public var points(default,null):Array<TempoPoint>;
+	var times:Array<Float> = [];
+
+	public function new(entries:Array<TempoPoint>) {
+		if (entries == null || entries.length == 0 || entries[0].step != 0) throw "Missing initial tempo";
+		points = [];
+		var time = 0.0;
+		for (p in entries) {
+			if (!Math.isFinite(p.step) || !Math.isFinite(p.bpm) || p.bpm <= 0) throw "Invalid tempo change";
+			if (points.length > 0) {
+				var prev = points[points.length-1];
+				if (p.step <= prev.step) throw "Tempo changes out of order";
+				time += (p.step-prev.step) * 15 / prev.bpm;
+			}
+			points.push({step:p.step,bpm:p.bpm});
+			times.push(time);
+		}
+	}
+
+	function index(value:Float, byTime:Bool):Int {
+		var lo = 0, hi = points.length;
+		while (lo + 1 < hi) {
+			var mid = (lo + hi) >>> 1;
+			if ((byTime ? times[mid] : points[mid].step) <= value) lo = mid;
+			else hi = mid;
+		}
+		return lo;
+	}
+
+	public function at(time:Float):Int return index(time,true);
+
+	public function stepAt(time:Float):Float {
+		var i = at(time);
+		return points[i].step + (time-times[i])*points[i].bpm/15;
+	}
+
+	public function timeAt(step:Float):Float {
+		var i = index(step,false);
+		return times[i] + (step-points[i].step)*15/points[i].bpm;
+	}
+
+	public function stepLength(time:Float):Float return timeAt(stepAt(time)+1)-time;
+}
+
 class CoverMidi {
-	public static function read(bytes:Bytes, ?onInitialTempo:Float->Void, autoSlides:Bool = true):Array<CoverNote> {
+	public static function read(bytes:Bytes, ?onInitialTempo:Float->Void, autoSlides:Bool = true, ?onMap:CoverTempo->Void, ?fallback:CoverTempo):Array<CoverNote> {
 		var f = new BytesInput(bytes);
 		f.bigEndian = true;
 		if (f.readString(4) != "MThd") throw "Missing MIDI header";
@@ -62,23 +109,18 @@ class CoverMidi {
 		}
 		for (event in tempo) if (event.us <= 0) throw "Invalid MIDI tempo";
 		tempo.sort((a,b)->a.tick == b.tick ? a.order-b.order : a.tick-b.tick);
-		if (onInitialTempo != null) {
-			var initialUs = 500000;
-			for (event in tempo) {
-				if (event.tick != 0) break;
-				initialUs = event.us;
-			}
-			onInitialTempo(60000000.0 / initialUs);
+		var entries:Array<TempoPoint> = [];
+		for (e in tempo) {
+			var step = e.tick * 4.0 / division;
+			var bpm = 60000000.0 / e.us;
+			if (entries.length > 0 && entries[entries.length-1].step == step)
+				entries[entries.length-1].bpm = bpm;
+			else entries.push({step:step,bpm:bpm});
 		}
-		function seconds(t:Int):Float {
-			var last=0, us=500000, sum=0.;
-			for (e in tempo) {
-				if(e.tick>t) break;
-				sum+=(e.tick-last)*(us/1000000.0)/division;
-				last=e.tick; us=e.us;
-			}
-			return sum+(t-last)*(us/1000000.0)/division;
-		}
+		var map = order == 0 && fallback != null ? fallback : new CoverTempo(entries);
+		if (onInitialTempo != null) onInitialTempo(map.points[0].bpm);
+		if (onMap != null) onMap(map);
+		function seconds(t:Int):Float return map.timeAt(t * 4.0 / division);
 		var out:Array<CoverNote> = [for (n in raw) {start:seconds(n.a),duration:seconds(n.b)-seconds(n.a),pitch:n.p,velocity:n.v,channel:n.c,slide:0}];
 		if (autoSlides) detectSlides(out);
 		return out;
