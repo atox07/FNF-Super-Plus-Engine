@@ -63,7 +63,7 @@ class CoverMaker extends MusicBeatSubstate
 	static inline var SONG_W:Int = 380;
 
 	static final HINT_ROLL:String = 'SPACE play/pause | ENTER stop | TAB slicer | ESC close | DEL delete | click ruler = move cursor | drag Dad/BF lane = move pattern\n'
-		+ 'Piano roll: click = new note, drag = move, right edge = resize, right click = delete | wheel = scroll, CTRL+wheel = zoom, ALT+wheel = pitch, SHIFT+wheel = octave\n'
+		+ 'Piano roll: click = new note, drag = move, drag a note border = resize (ALT = no grid), right click = delete | wheel = scroll, CTRL+wheel = zoom, ALT+wheel = pitch, SHIFT+wheel = octave\n'
 		+ 'CTRL+Z undo | CTRL+Y redo | CTRL+left drag = select notes | CTRL+A = select all | drag selection = move | DEL = delete | SLIDE ON = draw a target over a sustained note';
 	static final HINT_SLICER:String = 'SPACE play/pause | TAB back to piano roll | DEL delete slice | click slice = select + preview | SHIFT+click = cut here | drag a slice edge = resize\n'
 		+ 'Right click = delete slice | wheel = scroll | CTRL+wheel = zoom | Ruler: click to add, drag to move, right-click a marker to merge\n'
@@ -101,6 +101,7 @@ class CoverMaker extends MusicBeatSubstate
 	var selected:CoverNote = null;
 	var group:haxe.ds.ObjectMap<CoverNote, Bool> = new haxe.ds.ObjectMap();
 	var moving:Array<{note:CoverNote, start:Float, pitch:Int}> = [];
+	var movingDur:Array<Float> = []; // original durations, same order as moving (used by border resize)
 	var boxX:Float;
 	var boxY:Float;
 	var history:Array<{track:Int, before:String, after:String}> = [];
@@ -1592,9 +1593,11 @@ class CoverMaker extends MusicBeatSubstate
 		var v:CoverVoice = cur();
 		var t:Float = page + (mx - X0) / pps();
 		var p:Int = low + ROWS - 1 - Std.int((my - ROLL_Y) / ROW_H);
+		var tol:Float = 3 / pps(); // grab a few pixels around the borders, so tiny notes can be hit
 		var found:CoverNote = null;
 		for (n in v.notes)
-			if (n.pitch == p && t >= v.offset + n.start && t <= v.offset + n.start + n.duration)
+			if (n.pitch == p && t >= v.offset + n.start - tol && t <= v.offset + n.start + n.duration + tol
+				&& (found == null || n.duration <= found.duration)) // the shortest wins, so slides inside a long note stay reachable
 				found = n;
 		return found;
 	}
@@ -1770,14 +1773,27 @@ class CoverMaker extends MusicBeatSubstate
 			}
 			else
 			{
-				var endX:Float = X0 + (v.offset + selected.start + selected.duration - page) * pps();
+				// FL style: the borders of a note resize it, the body moves it
+				var sx:Float = X0 + (v.offset + selected.start - page) * pps();
+				var ex:Float = sx + selected.duration * pps();
+				var w:Float = ex - sx;
+				var zone:Float = Math.min(6, Math.max(2, w / 3));
+				var edge:Int = 0; // 1 = left border, 2 = right border
+				if (w <= zone * 2)
+					edge = mx < (sx + ex) / 2 ? 1 : 2; // too narrow for a body: the closer border wins
+				else if (mx >= ex - zone)
+					edge = 2;
+				else if (mx <= sx + zone)
+					edge = 1;
 				moving = [for (n in v.notes) if (group.exists(n)) {note:n, start:n.start, pitch:n.pitch}];
-				drag = moving.length > 1 ? 'group' : ((endX - mx < 7) ? 'resize' : 'move');
+				movingDur = [for (n in v.notes) if (group.exists(n)) n.duration];
+				drag = edge == 2 ? 'resizeR' : (edge == 1 ? 'resizeL' : (moving.length > 1 ? 'group' : 'move'));
 			}
-			oldValue = (drag == 'resize') ? selected.duration : selected.start;
+			oldValue = drag == 'resizeR' ? selected.start + selected.duration : selected.start;
 			oldPitch = p;
 			redrawMenu(); // SLIDE button shows the selected note
-			previewNote(selected);
+			if (drag != 'resizeL' && drag != 'resizeR')
+				previewNote(selected);
 			dirty = true;
 		}
 	}
@@ -1830,7 +1846,7 @@ class CoverMaker extends MusicBeatSubstate
 					pitchDelta = Std.int(Math.max(-item.pitch, Math.min(127 - item.pitch, pitchDelta)));
 				}
 				var anchor = cur().offset + oldValue;
-				d = horizontal ? Math.max(-earliest, gridTime(anchor + d, anchor - earliest) - anchor) : 0;
+				d = horizontal ? Math.max(-earliest, FlxG.keys.pressed.ALT ? d : gridTime(anchor + d, anchor - earliest) - anchor) : 0;
 				for (item in moving)
 				{
 					item.note.start = item.start + d;
@@ -1856,13 +1872,42 @@ class CoverMaker extends MusicBeatSubstate
 			case 'edgeL', 'edgeR':
 				cur().setEdge(slSel, drag == 'edgeL', Std.int(sx(mouseX())));
 				dirty = true;
-			case 'resize':
-				var start = cur().offset + selected.start;
-				selected.duration = horizontal ? gridTime(start + oldValue + d, start + gridSec) - start : oldValue;
+			case 'resizeL', 'resizeR':
+				// the dragged border follows the mouse (snapped to the grid unless ALT is held);
+				// every selected note gets the same delta
+				var right = drag == 'resizeR';
+				var free = FlxG.keys.pressed.ALT;
+				var minDur = free ? 0.005 : gridSec;
+				var off = cur().offset;
+				var edgeT = oldValue + d;
+				if (!free) edgeT = gridTime(off + edgeT, off) - off;
+				var delta = horizontal ? edgeT - oldValue : 0.0;
+				var lo = -1e9, hi = 1e9;
+				for (i in 0...moving.length)
+				{
+					if (right)
+						lo = Math.max(lo, Math.min(0, minDur - movingDur[i]) ); // never shrink below the minimum, but do not force notes that are already shorter
+					else
+					{
+						lo = Math.max(lo, -moving[i].start);
+						hi = Math.min(hi, Math.max(0, movingDur[i] - minDur));
+					}
+				}
+				delta = Math.max(lo, Math.min(hi, delta));
+				for (i in 0...moving.length)
+				{
+					if (right)
+						moving[i].note.duration = Math.max(0.005, movingDur[i] + delta);
+					else
+					{
+						moving[i].note.start = moving[i].start + delta;
+						moving[i].note.duration = Math.max(0.005, movingDur[i] - delta);
+					}
+				}
 				dirty = true;
 			case 'new', 'move':
 				var offset = cur().offset;
-				selected.start = horizontal ? Math.max(0, gridTime(offset + oldValue + d, offset) - offset) : oldValue;
+				selected.start = horizontal ? Math.max(0, FlxG.keys.pressed.ALT ? oldValue + d : gridTime(offset + oldValue + d, offset) - offset) : oldValue;
 				var np:Int = Std.int(Math.max(0, Math.min(127, oldPitch - Math.round((mouseY() - dragMy) / ROW_H))));
 				if (np != selected.pitch)
 				{
@@ -1914,13 +1959,17 @@ class CoverMaker extends MusicBeatSubstate
 			box(a, y, b - a, h, c);
 	}
 
-	function lbl(x:Float, y:Float, s:String, color:Int = 0xFFFFFFFF)
+	function lbl(x:Float, y:Float, s:String, color:Int = 0xFFFFFFFF, outline:Bool = true)
 	{
 		if (poolIdx >= pool.length)
 			return;
 		var t:FlxText = pool[poolIdx++];
 		t.x = x;
 		t.y = y;
+		// pooled texts are shared: set the border every time (a black outline on black text looks bloated)
+		var style:FlxTextBorderStyle = outline ? FlxTextBorderStyle.OUTLINE_FAST : FlxTextBorderStyle.NONE;
+		if (t.borderStyle != style)
+			t.borderStyle = style;
 		if (t.text != s)
 			t.text = s;
 		t.color = color;
@@ -1978,7 +2027,7 @@ class CoverMaker extends MusicBeatSubstate
 			cbox(X0, y, X1 - X0, ROW_H - 1, inSlice ? ROW_SLICE : (black ? ROW_DARK : ROW_LIGHT));
 			box(0, y, X0 - 6, ROW_H - 1, black ? 0xFF15171E : 0xFFDDE1EC);
 			if (p % 12 == 0)
-				lbl(4, y, 'C' + Std.int(p / 12), 0xFF111111);
+				lbl(4, y, 'C' + Std.int(p / 12), 0xFF111111, false);
 		}
 
 		// ---- righello ----
@@ -2054,6 +2103,11 @@ class CoverMaker extends MusicBeatSubstate
 			var nx = gridX(start);
 			var nw = Math.max(1, gridX(start + n.duration) - nx);
 			cbox(nx, ry, nw, ROW_H - 1, (n == selected || group.exists(n)) ? 0xFFFFCA66 : ((n.slideTarget == true || n.slide != 0) ? 0xFFFF8A3D : TRACK_COLOR[track]));
+			if ((n == selected || group.exists(n)) && nw >= 6) // border handles
+			{
+				cbox(nx, ry, 2, ROW_H - 1, 0xFFB97C1C);
+				cbox(nx + nw - 2, ry, 2, ROW_H - 1, 0xFFB97C1C);
+			}
 			if (n.slideTarget == true)
 			{
 				var size = Std.int(Math.min(9, nw));
