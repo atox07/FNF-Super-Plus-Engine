@@ -14,7 +14,7 @@ typedef CoverNote = {
 }
 
 class CoverMidi {
-	public static function read(bytes:Bytes, ?onInitialTempo:Float->Void):Array<CoverNote> {
+	public static function read(bytes:Bytes, ?onInitialTempo:Float->Void, autoSlides:Bool = true):Array<CoverNote> {
 		var f = new BytesInput(bytes);
 		f.bigEndian = true;
 		if (f.readString(4) != "MThd") throw "Missing MIDI header";
@@ -54,7 +54,7 @@ class CoverMidi {
 						if (!active.exists(key)) active.set(key,[]);
 						active.get(key).push({tick:tick,v:v});
 					} else if ((kind == 8 || kind == 9) && active.exists(key) && active.get(key).length > 0) {
-						var on = active.get(key).shift();
+						var on = active.get(key).pop();
 						raw.push({a:on.tick,b:tick,p:a,v:on.v,c:ch});
 					}
 				}
@@ -79,7 +79,31 @@ class CoverMidi {
 			}
 			return sum+(t-last)*(us/1000000.0)/division;
 		}
-		return [for (n in raw) {start:seconds(n.a),duration:seconds(n.b)-seconds(n.a),pitch:n.p,velocity:n.v,channel:n.c,slide:0}];
+		var out:Array<CoverNote> = [for (n in raw) {start:seconds(n.a),duration:seconds(n.b)-seconds(n.a),pitch:n.p,velocity:n.v,channel:n.c,slide:0}];
+		if (autoSlides) detectSlides(out);
+		return out;
+	}
+
+	// FL Studio slide notes arrive in the MIDI as plain notes: a shorter note lying
+	// inside a longer one on the same channel. Those become slideTarget notes.
+	public static function detectSlides(notes:Array<CoverNote>, maxRatio:Float = 0.7, eps:Float = 0.005):Void {
+		var targets = new haxe.ds.ObjectMap<CoverNote, Int>();
+		var sorted = notes.copy();
+		sorted.sort((a, b) -> Reflect.compare(b.duration, a.duration)); // longest first
+		for (n in sorted) {
+			var source:CoverNote = null;
+			for (s in sorted) {
+				if (s == n || s.channel != n.channel || s.slideTarget == true) continue;
+				if (s.start <= n.start + eps && n.start + n.duration <= s.start + s.duration + eps
+					&& n.duration < s.duration * maxRatio
+					&& (source == null || s.start > source.start)) source = s;
+			}
+			if (source == null) continue;
+			// same pitch only counts as a slide when it returns after other slides of that source
+			if (source.pitch == n.pitch && !targets.exists(source)) continue;
+			n.slideTarget = true;
+			targets.set(source, (targets.exists(source) ? targets.get(source) : 0) + 1);
+		}
 	}
 	static function variable(r:BytesInput):Int {
 		var n=0;
