@@ -89,15 +89,15 @@ class CoverMidi {
 	//  - normal: the note is inside the source and clearly shorter (maxRatio)
 	//  - tiny:   very short notes (<= tinyMax s, FL's minimum is even zero-length) only need to
 	//            START inside the source, even if they overhang its end
-	//  - return: a slide back to the source's own pitch (same pitch as the source) counts only
-	//            after the source already has an earlier slide, e.g. 64 -> 60 -> 64
+	//  - same pitch: a shorter note nested in a held note is a slide back to that key.
 	static function findSlideSource(all:Array<CoverNote>, n:CoverNote, maxRatio:Float, tinyMax:Float, eps:Float):CoverNote {
 		var source:CoverNote = null;
 		for (s in all) {
 			if (s == n || s.channel != n.channel || s.slideTarget == true) continue;
 			var end = s.start + s.duration;
 			var inside = s.start <= n.start + eps && n.start < end;
-			var contained = inside && n.start + n.duration <= end + eps && n.duration < s.duration * maxRatio;
+			var shorter = s.pitch == n.pitch ? n.duration < s.duration : n.duration < s.duration * maxRatio;
+			var contained = inside && n.start + n.duration <= end + eps && shorter;
 			var tiny = inside && n.duration <= tinyMax && n.duration < s.duration - 0.0001;
 			if ((contained || tiny) && (source == null || s.start > source.start)) source = s;
 		}
@@ -107,26 +107,11 @@ class CoverMidi {
 	public static function detectSlides(notes:Array<CoverNote>, maxRatio:Float = 0.7, tinyMax:Float = 0.06, eps:Float = 0.005):Void {
 		var sorted = notes.copy();
 		sorted.sort((a, b) -> Reflect.compare(b.duration, a.duration)); // longest first
-		var targets = new haxe.ds.ObjectMap<CoverNote, Array<CoverNote>>();
-		// pass 0: slides to a different pitch; pass 1: returns to the source's own pitch
-		for (pass in 0...2) {
-			for (n in sorted) {
-				if (n.slideTarget == true) continue;
-				var source = findSlideSource(sorted, n, maxRatio, tinyMax, eps);
-				if (source == null) continue;
-				var same = source.pitch == n.pitch;
-				if ((pass == 1) != same) continue;
-				var list = targets.get(source);
-				if (same) {
-					var earlier = false;
-					if (list != null) for (t in list) if (t.start <= n.start + eps) earlier = true;
-					if (!earlier) continue;
-				}
-				n.slideTarget = true;
-				if (n.duration < 0.005) n.duration = 0.005; // zero-length notes would be skipped by the renderer
-				if (list == null) { list = []; targets.set(source, list); }
-				list.push(n);
-			}
+		for (n in sorted) {
+			if (n.slideTarget == true) continue;
+			if (findSlideSource(sorted, n, maxRatio, tinyMax, eps) == null) continue;
+			n.slideTarget = true;
+			if (n.duration < 0.005) n.duration = 0.005;
 		}
 	}
 
