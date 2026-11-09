@@ -87,6 +87,12 @@ class CoverMaker extends MusicBeatSubstate
 	static inline var GAIN_X = 44;
 	static inline var GAIN_W = 66;
 	var gainTrack:Int = 0;
+	// channel pitch knob (FL style), one per lane; centre y is relative to LANE_Y
+	static inline var KNOB_CX = 17;
+	static inline var KNOB_CY = 21;
+	static inline var KNOB_R = 7;
+	static inline var PITCH_RANGE = 2400; // cents, +/- 2 octaves
+	var pitchTrack:Int = 0;
 	var gridSec:Float; // 1 step in secondi
 	var voices:Array<CoverVoice> = [new CoverVoice(), new CoverVoice()]; // 0 = Dad (Opponent), 1 = BF (Player)
 	var instPath:String = '';
@@ -361,6 +367,9 @@ class CoverMaker extends MusicBeatSubstate
 				items: [
 					it('Root -', function() changeRoot(-1), true),
 					it('Root +', function() changeRoot(1), true),
+					it('Pitch -1 semitone', function() { setPitch(track, voices[track].pitch - 100); edited(track); }, true),
+					it('Pitch +1 semitone', function() { setPitch(track, voices[track].pitch + 100); edited(track); }, true),
+					it('Pitch reset', function() { setPitch(track, 0); edited(track); }, true),
 					it('Mute track', function() { voices[track].muted = !voices[track].muted; edited(track); }, true)
 				]
 			}
@@ -664,7 +673,7 @@ class CoverMaker extends MusicBeatSubstate
 	{
 		var v:CoverVoice = voices[track];
 		infoText.text = 'Track: ${track == 0 ? "Dad" : "BF"}${v.muted ? " [MUTE]" : ""}   voice: ${v.source == "" ? "(none)" : baseName(v.source)}   '
-			+ 'slices: ${v.sliceCount()} (${v.mode})   root: ${v.root}   threshold: ${Math.round(v.threshold * 1000) / 1000}   notes: ${v.notes.length}   '
+			+ 'slices: ${v.sliceCount()} (${v.mode})   root: ${v.root}   pitch: ${Math.round(v.pitch)}c   threshold: ${Math.round(v.threshold * 1000) / 1000}   notes: ${v.notes.length}   '
 			+ 'BPM: ${Math.round(projectBpm * 100) / 100}';
 		redrawMenu();
 	}
@@ -1198,7 +1207,7 @@ class CoverMaker extends MusicBeatSubstate
 	{
 		var v = voices[i];
 		return haxe.Json.stringify({path:v.source, notes:v.notes, root:v.root, threshold:v.threshold,
-			offset:v.offset, muted:v.muted, gain:v.gain, sensitivity:v.sensitivity, mode:v.mode, slices:v.slicesAsArray()});
+			offset:v.offset, muted:v.muted, gain:v.gain, pitch:v.pitch, sensitivity:v.sensitivity, mode:v.mode, slices:v.slicesAsArray()});
 	}
 
 	function resetHistory()
@@ -1260,6 +1269,7 @@ class CoverMaker extends MusicBeatSubstate
 				v.offset = t.offset;
 				v.muted = t.muted;
 				v.gain = t.gain == null ? 1.0 : Math.max(0, Math.min(4, t.gain));
+				v.pitch = t.pitch == null ? 0.0 : Math.max(-PITCH_RANGE, Math.min(PITCH_RANGE, t.pitch));
 				v.sensitivity = t.sensitivity;
 				v.notes = t.notes;
 				v.setSlices(t.slices);
@@ -1519,6 +1529,12 @@ class CoverMaker extends MusicBeatSubstate
 			slicerWheel(mx);
 			dirty = true;
 		}
+		else if (FlxG.mouse.wheel != 0 && knobAt(mx, my) >= 0)
+		{
+			var kn = knobAt(mx, my);
+			setPitch(kn, voices[kn].pitch + FlxG.mouse.wheel * (FlxG.keys.pressed.CONTROL ? 1 : 100));
+			edited(kn);
+		}
 		else if (FlxG.mouse.wheel != 0 && my >= RULER_Y)
 		{
 			if (FlxG.keys.pressed.ALT)
@@ -1590,6 +1606,57 @@ class CoverMaker extends MusicBeatSubstate
 		moving = [];
 	}
 
+	function knobAt(mx:Float, my:Float):Int
+	{
+		for (i in 0...2)
+		{
+			var dx = mx - KNOB_CX, dy = my - (LANE_Y[i] + KNOB_CY);
+			if (dx * dx + dy * dy <= (KNOB_R + 3) * (KNOB_R + 3)) return i;
+		}
+		return -1;
+	}
+
+	function pitchText(c:Float):String
+		return (c > 0 ? '+' : '') + Math.round(c);
+
+	function setPitch(i:Int, cents:Float)
+	{
+		voices[i].pitch = Math.max(-PITCH_RANGE, Math.min(PITCH_RANGE, Math.round(cents)));
+		setStatus((i == 0 ? 'Dad' : 'BF') + ' channel pitch: ' + pitchText(voices[i].pitch) + ' cents   (drag = change, CTRL = fine, wheel = 100 cents, right click = reset)');
+		dirty = true;
+	}
+
+	// FL-style knob: dark disc, faint travel arc, coloured arc from the top to the value, white pointer
+	function drawKnob(cx:Float, cy:Float, value:Float, color:Int)
+	{
+		var r = KNOB_R;
+		for (dy in (-r)...(r + 1))
+		{
+			var hw = Math.round(Math.sqrt(r * r - dy * dy));
+			box(cx - hw, cy + dy, hw * 2 + 1, 1, 0xFF2B3248);
+		}
+		var range = 2.356; // +-135 degrees
+		var a = -range;
+		while (a <= range)
+		{
+			box(cx + Math.round(r * Math.sin(a)), cy - Math.round(r * Math.cos(a)), 1, 1, 0xFF4A5372);
+			a += 0.2;
+		}
+		var sweep = Math.max(-1, Math.min(1, value / PITCH_RANGE)) * range;
+		var steps = Std.int(Math.abs(sweep) / 0.12) + 1;
+		for (s in 0...steps + 1)
+		{
+			var b = sweep * s / steps;
+			box(cx + Math.round(r * Math.sin(b)) - 1, cy - Math.round(r * Math.cos(b)) - 1, 2, 2, color);
+		}
+		var rad = 1.0;
+		while (rad <= r - 2)
+		{
+			box(cx + Math.round(rad * Math.sin(sweep)), cy - Math.round(rad * Math.cos(sweep)), 1, 1, 0xFFDFE5ED);
+			rad += 0.5;
+		}
+	}
+
 	// CTRL+A: select every note of the current track (also the ones scrolled out of view)
 	function selectAll()
 	{
@@ -1647,6 +1714,14 @@ class CoverMaker extends MusicBeatSubstate
 		else if (my >= LANE_Y[0] && my < LANE_Y[1] + LANE_H)
 		{
 			var lane = my < LANE_Y[1] - 2 ? 0 : 1;
+			var knob = knobAt(mx, my);
+			if (knob >= 0)
+			{
+				pitchTrack = knob;
+				oldValue = voices[knob].pitch;
+				drag = 'pitch';
+				return;
+			}
 			if (my >= LANE_Y[lane] && my < LANE_Y[lane] + LANE_H && mx >= GAIN_X - 3 && mx <= GAIN_X + GAIN_W + 3)
 			{
 				gainTrack = lane;
@@ -1709,6 +1784,13 @@ class CoverMaker extends MusicBeatSubstate
 
 	function rightClick(mx:Float, my:Float)
 	{
+		var knob = knobAt(mx, my);
+		if (knob >= 0)
+		{
+			setPitch(knob, 0);
+			edited(knob);
+			return;
+		}
 		if (!inRoll(mx, my))
 			return;
 		var n:CoverNote = noteAt(mx, my);
@@ -1755,6 +1837,8 @@ class CoverMaker extends MusicBeatSubstate
 					item.note.pitch = item.pitch + pitchDelta;
 				}
 				dirty = true;
+			case 'pitch':
+				setPitch(pitchTrack, oldValue + (dragMy - mouseY()) * (FlxG.keys.pressed.CONTROL ? 1.0 : 8.0));
 			case 'gain':
 				var percent = Math.round(Math.max(0, Math.min(1, (mouseX() - GAIN_X) / GAIN_W)) * 400);
 				voices[gainTrack].gain = percent / 100.0;
@@ -1802,6 +1886,8 @@ class CoverMaker extends MusicBeatSubstate
 		}
 		else if (d == 'gain')
 			edited(gainTrack);
+		else if (d == 'pitch')
+			edited(pitchTrack);
 		else if (d == 'seek')
 			seek(mouseTime());
 		else
@@ -1868,13 +1954,14 @@ class CoverMaker extends MusicBeatSubstate
 		for (i in 0...2)
 		{
 			cbox(X0, LANE_Y[i], X1 - X0, LANE_H, track == i ? LANE_BG_ON : LANE_BG);
-			lbl(6, LANE_Y[i] + 7, (i == 0 ? 'Dad' : 'BF'), voices[i].muted ? 0xFF858595 : TRACK_COLOR[i]);
+			lbl(6, LANE_Y[i] + 1, (i == 0 ? 'Dad' : 'BF'), voices[i].muted ? 0xFF858595 : TRACK_COLOR[i]);
 			var level = voices[i].gain;
 			var y = LANE_Y[i] + 22;
 			box(GAIN_X, y, GAIN_W + 1, 3, 0xFF384057);
 			box(GAIN_X, y, GAIN_W * level / 4, 3, TRACK_COLOR[i]);
 			box(GAIN_X + Math.round(GAIN_W * level / 4) - 2, y - 2, 4, 7, 0xFFDFE5ED);
-			lbl(GAIN_X, LANE_Y[i] + 1, (voices[i].muted ? 'M ' : '') + Math.round(level * 100) + '%', TRACK_COLOR[i]);
+			lbl(GAIN_X, LANE_Y[i] + 1, (voices[i].muted ? 'M ' : '') + Math.round(level * 100) + '%' + (voices[i].pitch != 0 ? ' ' + pitchText(voices[i].pitch) + 'c' : ''), TRACK_COLOR[i]);
+			drawKnob(KNOB_CX, LANE_Y[i] + KNOB_CY, voices[i].pitch, TRACK_COLOR[i]);
 		}
 
 		var cv:CoverVoice = cur();
@@ -2022,7 +2109,7 @@ class CoverMaker extends MusicBeatSubstate
 					song: songName,
 					bpm: projectBpm,
 					inst: instPath,
-					tracks: [for (v in voices) {root: v.root, threshold: v.threshold, offset: v.offset, path: v.source, notes: v.notes, muted: v.muted, gain: v.gain, sensitivity: v.sensitivity, mode: v.mode, slices: v.slicesAsArray()}]
+					tracks: [for (v in voices) {root: v.root, threshold: v.threshold, offset: v.offset, path: v.source, notes: v.notes, muted: v.muted, gain: v.gain, pitch: v.pitch, sensitivity: v.sensitivity, mode: v.mode, slices: v.slicesAsArray()}]
 				}));
 				setStatus('Project saved');
 			}, SAVE);
@@ -2055,6 +2142,7 @@ class CoverMaker extends MusicBeatSubstate
 					v.notes = t.notes;
 					v.muted = t.muted;
 					v.gain = t.gain == null ? 1.0 : Math.max(0, Math.min(4, t.gain));
+					v.pitch = t.pitch == null ? 0.0 : Math.max(-PITCH_RANGE, Math.min(PITCH_RANGE, t.pitch));
 					vs.push(v);
 				}
 				var snd:Sound = (data.inst == '') ? Paths.inst(data.song) : Sound.fromFile(data.inst);
