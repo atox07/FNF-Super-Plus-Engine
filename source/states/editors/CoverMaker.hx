@@ -1259,7 +1259,7 @@ class CoverMaker extends MusicBeatSubstate
 				v.threshold = t.threshold;
 				v.offset = t.offset;
 				v.muted = t.muted;
-				v.gain = t.gain == null ? 1.0 : Math.max(0, Math.min(2, t.gain));
+				v.gain = t.gain == null ? 1.0 : Math.max(0, Math.min(4, t.gain));
 				v.sensitivity = t.sensitivity;
 				v.notes = t.notes;
 				v.setSlices(t.slices);
@@ -1661,7 +1661,7 @@ class CoverMaker extends MusicBeatSubstate
 					start: Math.max(0, gridTime(t, v.offset) - v.offset),
 					pitch: p,
 					duration: gridSec,
-					velocity: 100,
+					velocity: 127,
 					channel: 0,
 					slide: 0,
 					slideTarget: slideMode
@@ -1737,7 +1737,7 @@ class CoverMaker extends MusicBeatSubstate
 				}
 				dirty = true;
 			case 'gain':
-				var percent = Math.round(Math.max(0, Math.min(1, (mouseX() - GAIN_X) / GAIN_W)) * 200);
+				var percent = Math.round(Math.max(0, Math.min(1, (mouseX() - GAIN_X) / GAIN_W)) * 400);
 				voices[gainTrack].gain = percent / 100.0;
 				dirty = true;
 			case 'pattern':
@@ -1853,8 +1853,8 @@ class CoverMaker extends MusicBeatSubstate
 			var level = voices[i].gain;
 			var y = LANE_Y[i] + 22;
 			box(GAIN_X, y, GAIN_W + 1, 3, 0xFF384057);
-			box(GAIN_X, y, GAIN_W * level / 2, 3, TRACK_COLOR[i]);
-			box(GAIN_X + Math.round(GAIN_W * level / 2) - 2, y - 2, 4, 7, 0xFFDFE5ED);
+			box(GAIN_X, y, GAIN_W * level / 4, 3, TRACK_COLOR[i]);
+			box(GAIN_X + Math.round(GAIN_W * level / 4) - 2, y - 2, 4, 7, 0xFFDFE5ED);
 			lbl(GAIN_X, LANE_Y[i] + 1, (voices[i].muted ? 'M ' : '') + Math.round(level * 100) + '%', TRACK_COLOR[i]);
 		}
 
@@ -2035,7 +2035,7 @@ class CoverMaker extends MusicBeatSubstate
 					v.offset = t.offset;
 					v.notes = t.notes;
 					v.muted = t.muted;
-					v.gain = t.gain == null ? 1.0 : Math.max(0, Math.min(2, t.gain));
+					v.gain = t.gain == null ? 1.0 : Math.max(0, Math.min(4, t.gain));
 					vs.push(v);
 				}
 				var snd:Sound = (data.inst == '') ? Paths.inst(data.song) : Sound.fromFile(data.inst);
