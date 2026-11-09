@@ -54,7 +54,10 @@ class CoverMidi {
 						if (!active.exists(key)) active.set(key,[]);
 						active.get(key).push({tick:tick,v:v});
 					} else if ((kind == 8 || kind == 9) && active.exists(key) && active.get(key).length > 0) {
-						var on = active.get(key).pop();
+						var list = active.get(key);
+						var idx = list.length - 1;
+						while (idx > 0 && list[idx].tick >= tick) idx--; // a note-on at this very tick is not what this note-off closes
+						var on = list.splice(idx, 1)[0];
 						raw.push({a:on.tick,b:tick,p:a,v:on.v,c:ch});
 					}
 				}
@@ -84,9 +87,12 @@ class CoverMidi {
 		return out;
 	}
 
-	// FL Studio slide notes arrive in the MIDI as plain notes: a shorter note lying
-	// inside a longer one on the same channel. Those become slideTarget notes.
-	public static function detectSlides(notes:Array<CoverNote>, maxRatio:Float = 0.7, eps:Float = 0.005):Void {
+	// FL Studio slide notes arrive in the MIDI as plain notes lying on top of a longer
+	// note of the same channel. Those become slideTarget notes.
+	//  - normal: the note is inside the source and clearly shorter (maxRatio)
+	//  - tiny:   very short notes (<= tinyMax s, e.g. FL's 1-tick minimum) only need to START
+	//            inside the source, even if they overhang its end
+	public static function detectSlides(notes:Array<CoverNote>, maxRatio:Float = 0.7, tinyMax:Float = 0.06, eps:Float = 0.005):Void {
 		var targets = new haxe.ds.ObjectMap<CoverNote, Int>();
 		var sorted = notes.copy();
 		sorted.sort((a, b) -> Reflect.compare(b.duration, a.duration)); // longest first
@@ -94,14 +100,17 @@ class CoverMidi {
 			var source:CoverNote = null;
 			for (s in sorted) {
 				if (s == n || s.channel != n.channel || s.slideTarget == true) continue;
-				if (s.start <= n.start + eps && n.start + n.duration <= s.start + s.duration + eps
-					&& n.duration < s.duration * maxRatio
-					&& (source == null || s.start > source.start)) source = s;
+				var end = s.start + s.duration;
+				var inside = s.start <= n.start + eps && n.start < end;
+				var contained = inside && n.start + n.duration <= end + eps && n.duration < s.duration * maxRatio;
+				var tiny = inside && n.duration <= tinyMax && n.duration < s.duration - 0.0001;
+				if ((contained || tiny) && (source == null || s.start > source.start)) source = s;
 			}
 			if (source == null) continue;
 			// same pitch only counts as a slide when it returns after other slides of that source
 			if (source.pitch == n.pitch && !targets.exists(source)) continue;
 			n.slideTarget = true;
+			if (n.duration < 0.005) n.duration = 0.005; // zero-length notes would be skipped by the renderer
 			targets.set(source, (targets.exists(source) ? targets.get(source) : 0) + 1);
 		}
 	}
