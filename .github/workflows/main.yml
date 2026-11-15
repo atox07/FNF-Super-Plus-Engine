@@ -253,6 +253,8 @@ jobs:
     runs-on: windows-2025
     needs: check_platforms
     if: needs.check_platforms.outputs.build_windows == 'true'
+    env:
+      HXCPP_COMPILE_CACHE: ${{ github.workspace }}\.hxcpp_cache
 
     steps:
       - name: Checkout repository
@@ -266,6 +268,12 @@ jobs:
       - uses: krdlab/setup-haxe@master
         with:
           haxe-version: 4.3.7
+
+      - name: Cache haxelib
+        uses: actions/cache@v4
+        with:
+          path: C:\haxelib
+          key: haxelib-${{ runner.os }}-${{ hashFiles('setup/windows-lib.bat') }}
 
       - name: Install libraries
         run: |
@@ -285,6 +293,14 @@ jobs:
           	public static inline final runId:String = "${{ github.run_id }}";
           }
           '@ | Set-Content -Path source/backend/BuildInfoGenerated.hx
+
+      - name: Cache hxcpp compile output
+        uses: actions/cache@v4
+        with:
+          path: .hxcpp_cache
+          key: hxcpp-${{ runner.os }}-${{ github.run_id }}
+          restore-keys: |
+            hxcpp-${{ runner.os }}-
 
       - name: Build
         run: haxelib run lime build Project.xml windows --app-version="${env:APP_VERSION}" -D officialBuild -release
