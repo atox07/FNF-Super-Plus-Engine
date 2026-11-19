@@ -23,7 +23,7 @@ class ABotSpectrum
 
 	#if funkin.vis
 	var _analyzer:SpectralAnalyzer;
-	var _bars:Array<Bar>;
+	var _bars = null;
 	#end
 
 	final _smoothing:Float;

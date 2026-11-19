@@ -85,7 +85,7 @@ class ABotSpeaker extends FlxSpriteGroup
 	}
 
 	#if funkin.vis
-	var levels:Array<Bar>;
+	var levels = null;
 	var levelMax:Int = 0;
 
 	override function update(elapsed:Float):Void

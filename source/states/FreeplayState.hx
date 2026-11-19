@@ -155,7 +155,7 @@ class FreeplayState extends MusicBeatState
 
 	#if funkin.vis
 	public var _analyzer:SpectralAnalyzer = null;
-	public var _analyzerLevels:Array<Bar> = null;
+	public var _analyzerLevels = null;
 	public var _needsAnalyzerInit:Bool = false;
 	public var _vizMusicRef:FlxSound = null;
 	public var _vizBeatPulse:Float = 0;
