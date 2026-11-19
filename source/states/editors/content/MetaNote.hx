@@ -153,8 +153,12 @@ class EventMetaNote extends MetaNote
 	{
 		super(time, -1, eventData);
 		this.isEvent = true;
-		events = eventData[1];
-		// trace('events: $events');
+		var rawEvents:Dynamic = eventData[1];
+		events = Std.isOfType(rawEvents, Array) ? cast rawEvents : [];
+		var validEvents = events.filter(event -> Std.isOfType(event, Array) && event.length > 0);
+		if (validEvents.length != events.length)
+			events = validEvents;
+		songData[1] = events;
 
 		loadGraphic(Paths.image('editors/eventIcon'));
 		setGraphicSize(ChartingState.GRID_SIZE);
@@ -216,7 +220,7 @@ class EventMetaNote extends MetaNote
 			eventText.text = '${events.length} Events ($myTime ms)$extendedInfo:\n${eventNames.join(', ')}';
 		}
 		else
-			eventText.text = 'ERROR FAILSAFE';
+			eventText.text = 'No events';
 	}
 
 	public function getEventValues(index:Int):Array<String>

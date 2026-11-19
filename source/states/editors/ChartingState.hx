@@ -1683,17 +1683,7 @@ class ChartingState extends MusicBeatState implements PsychUIEventHandler.PsychU
 								{
 									trace('Added event at time: $strumTime');
 									var didAdd:Bool = false;
-
-									var eventAdded:EventMetaNote = createEvent([
-										strumTime,
-										[
-											[
-												eventsList[Std.int(Math.max(eventDropDown.selectedIndex, 0))][0],
-												value1InputText.text,
-												value2InputText.text
-											]
-										]
-									]);
+									var eventAdded:EventMetaNote = createEvent([strumTime, [newEventValues()]]);
 									for (num in sectionFirstEventID...events.length)
 									{
 										var event = events[num];
@@ -1935,17 +1925,7 @@ class ChartingState extends MusicBeatState implements PsychUIEventHandler.PsychU
 							{
 								trace('Added event at time: $strumTime');
 								var didAdd:Bool = false;
-
-								var eventAdded:EventMetaNote = createEvent([
-									strumTime,
-									[
-										[
-											eventsList[Std.int(Math.max(eventDropDown.selectedIndex, 0))][0],
-											value1InputText.text,
-											value2InputText.text
-										]
-									]
-								]);
+								var eventAdded:EventMetaNote = createEvent([strumTime, [newEventValues()]]);
 								for (num in sectionFirstEventID...events.length)
 								{
 									var event = events[num];
@@ -2324,9 +2304,9 @@ class ChartingState extends MusicBeatState implements PsychUIEventHandler.PsychU
 		if (selectedNotes.length == 1 && selectedNotes[0].isEvent)
 		{
 			var eventNote:EventMetaNote = cast(selectedNotes[0], EventMetaNote);
-			curEventSelected = Std.int(FlxMath.bound(curEventSelected, 0, eventNote.events.length - 1));
+			curEventSelected = Std.int(FlxMath.bound(curEventSelected, 0, Math.max(0, eventNote.events.length - 1)));
 			selectedEventText.text = 'Selected Event: ${curEventSelected + 1} / ${eventNote.events.length}';
-			selectedEventText.visible = true;
+			selectedEventText.visible = eventNote.events.length > 0;
 
 			var myEvent:Array<String> = eventNote.events[curEventSelected];
 			if (myEvent != null)
@@ -2731,14 +2711,8 @@ class ChartingState extends MusicBeatState implements PsychUIEventHandler.PsychU
 		var swagEvent:EventMetaNote = new EventMetaNote(daStrumTime, event);
 
 		if (extendEventValuesCheckbox != null && extendEventValuesCheckbox.checked)
-		{
-			for (i in 0...swagEvent.events.length)
-			{
-				var subEvent:Array<String> = swagEvent.events[i];
-				while (subEvent.length < 4)
-					subEvent.push('');
-			}
-		}
+			for (subEvent in swagEvent.events)
+				ensureEventMoreValues(subEvent);
 
 		swagEvent.x = gridBg.x;
 		swagEvent.eventText.x = swagEvent.x - swagEvent.eventText.width - 10;
@@ -2748,6 +2722,36 @@ class ChartingState extends MusicBeatState implements PsychUIEventHandler.PsychU
 		var secNum:Int = sectionIndexForTime(daStrumTime);
 		positionNoteYOnTime(swagEvent, secNum);
 		return swagEvent;
+	}
+
+	function eventDefinition(index:Int):Array<String>
+	{
+		if (eventsList != null && index >= 0 && index < eventsList.length)
+			return eventsList[index];
+		return null;
+	}
+
+	function newEventValues():Array<String>
+	{
+		var definition = eventDefinition(eventDropDown.selectedIndex) ?? defaultEvents[0];
+		var values = [definition[0], value1InputText.text, value2InputText.text];
+		if (extendEventValuesCheckbox.checked)
+		{
+			values.push(value3InputText.text);
+			values.push(value4InputText.text);
+		}
+		return values;
+	}
+
+	function selectedEventValues(note:MetaNote, useLast:Bool):Array<String>
+	{
+		if (note == null || !note.isEvent)
+			return null;
+		var event:EventMetaNote = cast note;
+		if (event.events.length == 0)
+			return null;
+		var last = event.events.length - 1;
+		return event.events[useLast ? last : Std.int(FlxMath.bound(curEventSelected, 0, last))];
 	}
 
 	function _cacheSections()
@@ -3320,34 +3324,21 @@ class ChartingState extends MusicBeatState implements PsychUIEventHandler.PsychU
 
 		eventDropDown = new PsychUIDropDownMenu(objX, objY, [], function(id:Int, character:String)
 		{
-			var eventSelected:Array<String> = eventsList[id];
+			var eventSelected:Array<String> = eventDefinition(id);
+			if (eventSelected == null)
+				return;
 			var eventName:String = eventSelected[0];
 			var description:String = eventSelected[1];
-			eventDescriptionText.text = description;
-			if (selectedNotes.length > 1)
+			eventDescriptionText.text = description ?? '';
+			var multiple = selectedNotes.length > 1;
+			for (note in selectedNotes)
 			{
-				for (note in selectedNotes)
-				{
-					if (note == null || !note.isEvent)
-						continue;
-
-					var event:EventMetaNote = cast(note, EventMetaNote);
-					event.events[event.events.length - 1][0] = eventName;
-					event.updateEventText();
-					if (extendEventValuesCheckbox.checked) {
-						ensureEventMoreValues(event.events[event.events.length - 1]);
-					}
-				}
-			}
-			else if (selectedNotes.length == 1 && selectedNotes[0].isEvent)
-			{
-				var event:EventMetaNote = cast(selectedNotes[0], EventMetaNote);
-				var idx = Std.int(FlxMath.bound(curEventSelected, 0, event.events.length - 1));
-				event.events[idx][0] = eventName;
-				if (extendEventValuesCheckbox.checked) {
-					ensureEventMoreValues(event.events[idx]);
-				}
-				event.updateEventText();
+				var values = selectedEventValues(note, multiple);
+				if (values == null)
+					continue;
+				values[0] = eventName;
+				ensureEventMoreValues(values);
+				cast(note, EventMetaNote).updateEventText();
 			}
 			refreshSelectedEventPanel();
 		});
@@ -3356,7 +3347,7 @@ class ChartingState extends MusicBeatState implements PsychUIEventHandler.PsychU
 		{
 			if (selectedNotes.length == 1)
 			{
-				if (selectedNotes[0].isEvent)
+				if (selectedNotes[0] != null && selectedNotes[0].isEvent)
 				{
 					var event:EventMetaNote = cast(selectedNotes[0], EventMetaNote);
 					func(event);
@@ -3399,26 +3390,26 @@ class ChartingState extends MusicBeatState implements PsychUIEventHandler.PsychU
 		{
 			genericEventButton(function(event:EventMetaNote)
 			{
-				var newEvent:Array<String> = [
-					eventsList[Std.int(Math.max(eventDropDown.selectedIndex, 0))][0],
-					value1InputText.text,
-					value2InputText.text
-				];
-				if (extendEventValuesCheckbox.checked) {
-					ensureEventMoreValues(newEvent);
-				}
-				event.events.push(newEvent);
+				event.events.push(newEventValues());
 				event.updateEventText();
-				curEventSelected++;
+				curEventSelected = event.events.length - 1;
 			});
 		}, 20);
 		var leftButton:PsychUIButton = new PsychUIButton(objX2 + 80, objY, '<', function()
 		{
-			genericEventButton(function(event:EventMetaNote) curEventSelected = FlxMath.wrap(curEventSelected - 1, 0, event.events.length - 1));
+			genericEventButton(function(event:EventMetaNote)
+			{
+				if (event.events.length > 0)
+					curEventSelected = FlxMath.wrap(curEventSelected - 1, 0, event.events.length - 1);
+			});
 		}, 20);
 		var rightButton:PsychUIButton = new PsychUIButton(objX2 + 110, objY, '>', function()
 		{
-			genericEventButton(function(event:EventMetaNote) curEventSelected = FlxMath.wrap(curEventSelected + 1, 0, event.events.length - 1));
+			genericEventButton(function(event:EventMetaNote)
+			{
+				if (event.events.length > 0)
+					curEventSelected = FlxMath.wrap(curEventSelected + 1, 0, event.events.length - 1);
+			});
 		}, 20);
 		removeButton.normalStyle.bgColor = FlxColor.RED;
 		removeButton.normalStyle.textColor = FlxColor.WHITE;
@@ -3430,27 +3421,15 @@ class ChartingState extends MusicBeatState implements PsychUIEventHandler.PsychU
 
 		function changeEventsValue(str:String, n:Int)
 		{
-			if (selectedNotes.length > 1)
+			var multiple = selectedNotes.length > 1;
+			for (note in selectedNotes)
 			{
-				for (note in selectedNotes)
-				{
-					if (note == null || !note.isEvent)
-						continue;
-
-					var event:EventMetaNote = cast(note, EventMetaNote);
-					var idx = event.events.length - 1;
-					ensureEventMoreValues(event.events[idx]);
-					event.events[idx][n] = str;
-					event.updateEventText();
-				}
-			}
-			else if (selectedNotes.length == 1 && selectedNotes[0].isEvent)
-			{
-				var event:EventMetaNote = cast(selectedNotes[0], EventMetaNote);
-				var idx = Std.int(FlxMath.bound(curEventSelected, 0, event.events.length - 1));
-				ensureEventMoreValues(event.events[idx]);
-				event.events[idx][n] = str;
-				event.updateEventText();
+				var values = selectedEventValues(note, multiple);
+				if (values == null)
+					continue;
+				ensureEventMoreValues(values);
+				values[n] = str;
+				cast(note, EventMetaNote).updateEventText();
 			}
 			refreshSelectedEventPanel();
 		}
@@ -3530,7 +3509,7 @@ class ChartingState extends MusicBeatState implements PsychUIEventHandler.PsychU
 		if (!extendEventValuesCheckbox.checked)
 			return;
 
-		while (event.length < 4) {
+		while (event.length < 5) {
 			event.push('');
 		}
 	}

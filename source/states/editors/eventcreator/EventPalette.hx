@@ -71,8 +71,13 @@ class EventPalette
 				for (b in list)
 				{
 					var def:BlockDef = cast b;
-					if (def == null || def.id == null || def.template == null || def.fields == null)
+					if (def == null || def.id == null || def.name == null || def.template == null || def.fields == null)
 						continue;
+					if (Lambda.exists(def.fields, field -> field == null || field.key == null || field.type == null))
+					{
+						loadError = 'blocks.json: incomplete field in "' + def.id + '".';
+						continue;
+					}
 
 					if (byId.exists(def.id))
 						blocks[blocks.indexOf(byId.get(def.id))] = def;
