@@ -16,6 +16,9 @@ class MasterEditorMenu extends MusicBeatState
 		'stage_editor',
 		'week_editor',
 		'hud_editor',
+		#if (sys && MODS_ALLOWED && LUA_ALLOWED)
+		'lua_blocks_editor',
+		#end
 		'menu_character_editor',
 		'dialogue_editor',
 		'dialogue_portrait_editor',
@@ -100,6 +103,9 @@ class MasterEditorMenu extends MusicBeatState
 			Language.getPhrase('stage_editor', 'Stage Editor'),
 			Language.getPhrase('week_editor', 'Week Editor'),
 			Language.getPhrase('hud_editor', 'HUD Editor'),
+			#if (sys && MODS_ALLOWED && LUA_ALLOWED)
+			Language.getPhrase('lua_blocks_editor', 'Lua Blocks Editor'),
+			#end
 			Language.getPhrase('menu_character_editor', 'Menu Character Editor'),
 			Language.getPhrase('dialogue_editor', 'Dialogue Editor'),
 			Language.getPhrase('dialogue_portrait_editor', 'Dialogue Portrait Editor'),
@@ -143,31 +149,22 @@ class MasterEditorMenu extends MusicBeatState
 				return;
 			}
 
-switch (curSelected)
-{
-    case 0: // Chart Editor
-        LoadingState.loadAndSwitchState(new ChartingState(), false);
-    case 1: // Character Editor
-        LoadingState.loadAndSwitchState(new CharacterEditorState(Character.DEFAULT_CHARACTER, false));
-    case 2: // Stage Editor
-        LoadingState.loadAndSwitchState(new StageEditorState());
-    case 3: // Week Editor
-        MusicBeatState.switchState(new WeekEditorState());
-    case 4: // HUD Editor (NUOVO)
-        MusicBeatState.switchState(new HudEditorState());
-    case 5: // Menu Character Editor (era 4)
-        MusicBeatState.switchState(new MenuCharacterEditorState());
-    case 6: // Dialogue Editor (era 5)
-        LoadingState.loadAndSwitchState(new DialogueEditorState(), false);
-    case 7: // Dialogue Portrait Editor (era 6)
-        LoadingState.loadAndSwitchState(new DialogueCharacterEditorState(), false);
-    case 8: // Dialogue Pixel Editor (era 7)
-        LoadingState.loadAndSwitchState(new DialoguePixelEditorState(), false);
-    case 9: // Note Splash Editor (era 8)
-        MusicBeatState.switchState(new NoteSplashEditorState());
-    case 10: // Modchart Converter (era 9 — dead code, ma lo tengo pulito)
-        MusicBeatState.switchState(new ModchartConverterState());
-}
+			switch (optionKeys[curSelected])
+			{
+				case 'chart_editor': LoadingState.loadAndSwitchState(new ChartingState(), false);
+				case 'character_editor': LoadingState.loadAndSwitchState(new CharacterEditorState(Character.DEFAULT_CHARACTER, false));
+				case 'stage_editor': LoadingState.loadAndSwitchState(new StageEditorState());
+				case 'week_editor': MusicBeatState.switchState(new WeekEditorState());
+				case 'hud_editor': MusicBeatState.switchState(new HudEditorState());
+				#if (sys && MODS_ALLOWED && LUA_ALLOWED)
+				case 'lua_blocks_editor': MusicBeatState.switchState(new LuaBlocksEditorState());
+				#end
+				case 'menu_character_editor': MusicBeatState.switchState(new MenuCharacterEditorState());
+				case 'dialogue_editor': LoadingState.loadAndSwitchState(new DialogueEditorState(), false);
+				case 'dialogue_portrait_editor': LoadingState.loadAndSwitchState(new DialogueCharacterEditorState(), false);
+				case 'dialogue_pixel_editor': LoadingState.loadAndSwitchState(new DialoguePixelEditorState(), false);
+				case 'note_splash_editor': MusicBeatState.switchState(new NoteSplashEditorState());
+			}
 			FlxG.sound.music.volume = 0;
 			FreeplayState.destroyFreeplayVocals();
 		}
@@ -179,14 +176,14 @@ switch (curSelected)
 			if (item.targetY == 0)
 				item.alpha = canSelect(num) ? 1 : 0.35;
 
-			if (num == 9 && !canSelect(num))
+			if (optionKeys[num] == 'note_splash_editor' && !canSelect(num))
 			{
 				disabledTxt.visible = true;
 				disabledTxt.x = item.x;
 				disabledTxt.y = item.y + item.height + 8;
 			}
 		}
-		if (canSelect(9))
+		if (ClientPrefs.data.noteRGB)
 			disabledTxt.visible = false;
 	}
 
@@ -208,7 +205,7 @@ switch (curSelected)
 	}
 
 	function canSelect(index:Int):Bool
-         return index != 9 || ClientPrefs.data.noteRGB;
+		return optionKeys[index] != 'note_splash_editor' || ClientPrefs.data.noteRGB;
 
 	#if MODS_ALLOWED
 	function changeDirectory(change:Int = 0)

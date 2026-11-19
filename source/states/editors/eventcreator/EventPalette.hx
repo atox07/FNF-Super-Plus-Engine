@@ -29,7 +29,7 @@ class EventPalette
 
 	static var byId:Map<String, BlockDef> = new Map();
 
-	public static function load():Void
+	public static function load(includeMods:Bool = true):Void
 	{
 		blocks = [];
 		byId = new Map();
@@ -48,7 +48,7 @@ class EventPalette
 
 		// 2) palette dei mod (e copia base su disco, se esiste: il merge per id e' idempotente)
 		#if MODS_ALLOWED
-		try
+		if (includeMods) try
 		{
 			for (path in Mods.directoriesWithFile(Paths.getSharedPath(), FILE))
 			{
